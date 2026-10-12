@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "System Monitor (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "System Monitor (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
