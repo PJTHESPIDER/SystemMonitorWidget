@@ -79,9 +79,18 @@ if (-not $cert) { Fail "Certificate creation failed." }
 $securePwd = ConvertTo-SecureString -String $CertPassword -Force -AsPlainText
 Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $securePwd | Out-Null
 
-# Locate required tools
-$makeappx = (Get-Command makeappx.exe -ErrorAction SilentlyContinue).Source
-$signtool  = (Get-Command signtool.exe -ErrorAction SilentlyContinue).Source
+# Locate required tools — check PATH first, then fall back to Windows Kits
+function Find-SdkTool([string]$name) {
+    $fromPath = (Get-Command $name -ErrorAction SilentlyContinue).Source
+    if ($fromPath) { return $fromPath }
+    $kitsBase = "C:\Program Files (x86)\Windows Kits\10\bin"
+    return Get-ChildItem -Path $kitsBase -Recurse -Filter $name -ErrorAction SilentlyContinue |
+        Where-Object { $_.DirectoryName -match "x64" } |
+        Sort-Object -Property FullName -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+$makeappx = Find-SdkTool "makeappx.exe"
+$signtool  = Find-SdkTool "signtool.exe"
 if (-not $makeappx) { Fail "makeappx.exe not found. Install Windows SDK." }
 if (-not $signtool) { Fail "signtool.exe not found. Install Windows SDK." }
 

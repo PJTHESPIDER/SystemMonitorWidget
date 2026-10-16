@@ -237,6 +237,7 @@ namespace System_Monitor.Services
             var payload = new
             {
                 cpu = $"{_metrics.CpuPercent:F1}%",
+                cpuClock = _metrics.CpuClockDisplay,
                 igpu = _metrics.GpuPercent.HasValue ? $"{_metrics.GpuPercent.Value:F1}%" : "N/A",
                 dgpu = _metrics.NvidiaGpuPercent.HasValue ? $"{_metrics.NvidiaGpuPercent.Value:F1}%" : "N/A",
                 ram = _metrics.RamDisplay,
@@ -249,6 +250,9 @@ namespace System_Monitor.Services
                 diskPercent = $"{_metrics.DiskPercent:F1}%",
                 netDown = ByteFormatter.FormatNetworkSpeed(_metrics.NetworkDownloadBytesPerSec),
                 netUp = ByteFormatter.FormatNetworkSpeed(_metrics.NetworkUploadBytesPerSec),
+                cpuTemp = _metrics.CpuTemperature.HasValue ? $"{_metrics.CpuTemperature.Value:F1}°C" : "N/A",
+                gpuTemp = _metrics.GpuTemperature.HasValue ? $"{_metrics.GpuTemperature.Value:F1}°C" : "N/A",
+                gpuVram = _metrics.GpuVramDisplay ?? "N/A",
                 lastUpdated = DateTime.Now.ToString("h:mm:ss tt")
             };
 

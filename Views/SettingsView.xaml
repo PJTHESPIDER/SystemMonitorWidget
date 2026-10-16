@@ -2,7 +2,7 @@
     x:Class="System_Monitor.Views.SettingsView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Width="380" Height="280">
+    Width="380" Height="340">
     <StackPanel Padding="12" Spacing="8">
         <TextBlock Text="Widget Settings" FontWeight="SemiBold" FontSize="14"/>
 
@@ -12,6 +12,16 @@
             <CheckBox Content="RAM" IsChecked="{Binding ShowRam}" />
             <CheckBox Content="Disk" IsChecked="{Binding ShowDisk}" />
             <CheckBox Content="Network" IsChecked="{Binding ShowNetwork}" />
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <CheckBox Content="CPU Temp" IsChecked="{Binding ShowCpuTemp}" />
+            <CheckBox Content="CPU Clock" IsChecked="{Binding ShowCpuClock}" />
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <CheckBox Content="GPU Temp" IsChecked="{Binding ShowGpuTemp}" />
+            <CheckBox Content="GPU VRAM" IsChecked="{Binding ShowGpuVram}" />
         </StackPanel>
 
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">

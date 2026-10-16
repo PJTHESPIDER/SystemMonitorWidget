@@ -10,6 +10,8 @@ namespace System_Monitor.Models
         private double _cpuPercent;
         private double? _gpuPercent;
         private double? _nvidiaGpuPercent;
+        private double? _cpuTemperature;
+        private double? _gpuTemperature;
         private double _ramPercent;
         private ulong _ramUsedBytes;
         private ulong _ramTotalBytes;
@@ -18,6 +20,9 @@ namespace System_Monitor.Models
         private long _diskTotalBytes;
         private double _networkDownloadBytesPerSec;
         private double _networkUploadBytesPerSec;
+        private ulong? _gpuVramUsedBytes;
+        private ulong? _gpuVramTotalBytes;
+        private double? _cpuClockMHz;
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -37,6 +42,18 @@ namespace System_Monitor.Models
         {
             get => _nvidiaGpuPercent;
             set { _nvidiaGpuPercent = value; OnPropertyChanged(nameof(NvidiaGpuPercent)); }
+        }
+
+        public double? CpuTemperature
+        {
+            get => _cpuTemperature;
+            set { _cpuTemperature = value; OnPropertyChanged(nameof(CpuTemperature)); }
+        }
+
+        public double? GpuTemperature
+        {
+            get => _gpuTemperature;
+            set { _gpuTemperature = value; OnPropertyChanged(nameof(GpuTemperature)); }
         }
 
         public double RamPercent
@@ -120,6 +137,64 @@ namespace System_Monitor.Models
             get => _networkUploadBytesPerSec;
             set { _networkUploadBytesPerSec = value; OnPropertyChanged(nameof(NetworkUploadBytesPerSec)); }
         }
+
+        public ulong? GpuVramUsedBytes
+        {
+            get => _gpuVramUsedBytes;
+            set
+            {
+                _gpuVramUsedBytes = value;
+                OnPropertyChanged(nameof(GpuVramUsedBytes));
+                OnPropertyChanged(nameof(GpuVramDisplay));
+            }
+        }
+
+        public ulong? GpuVramTotalBytes
+        {
+            get => _gpuVramTotalBytes;
+            set
+            {
+                _gpuVramTotalBytes = value;
+                OnPropertyChanged(nameof(GpuVramTotalBytes));
+                OnPropertyChanged(nameof(GpuVramDisplay));
+            }
+        }
+
+        public string? GpuVramDisplay
+        {
+            get
+            {
+                if (!_gpuVramUsedBytes.HasValue) return null;
+                if (_gpuVramTotalBytes.HasValue && _gpuVramTotalBytes.Value > 0)
+                {
+                    var pct = (double)_gpuVramUsedBytes.Value / _gpuVramTotalBytes.Value * 100.0;
+                    return ByteFormatter.FormatUsage(_gpuVramUsedBytes.Value, _gpuVramTotalBytes.Value, pct);
+                }
+                return ByteFormatter.FormatBytes(_gpuVramUsedBytes.Value);
+            }
+        }
+
+        public double? CpuClockMHz
+        {
+            get => _cpuClockMHz;
+            set
+            {
+                _cpuClockMHz = value;
+                OnPropertyChanged(nameof(CpuClockMHz));
+                OnPropertyChanged(nameof(CpuClockDisplay));
+            }
+        }
+
+        public string CpuClockDisplay
+        {
+            get
+            {
+                if (!_cpuClockMHz.HasValue) return "N/A";
+                var mhz = _cpuClockMHz.Value;
+                return mhz >= 1000 ? $"{mhz / 1000.0:F2} GHz" : $"{mhz:F0} MHz";
+            }
+        }
+
 
         // Chart series (simple rolling collections)
         public ObservableCollection<double> CpuSeries { get; } = new ObservableCollection<double>();

@@ -25,12 +25,11 @@ namespace System_Monitor
     {
         public MainWindow()
         {
-            InitializeComponent();
             this.ExtendsContentIntoTitleBar = true;
 
             // Set window size and position
             var appWindow = this.AppWindow;
-            appWindow.Resize(new Windows.Graphics.SizeInt32 { Width = 500, Height = 400 });
+            appWindow.Resize(new Windows.Graphics.SizeInt32 { Width = 560, Height = 420 });
 
             // Position window at a visible location
             appWindow.Move(new Windows.Graphics.PointInt32(100, 100));

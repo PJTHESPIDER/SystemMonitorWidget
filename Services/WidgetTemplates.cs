@@ -87,6 +87,20 @@ namespace System_Monitor.Services
                     },
                     {
                       "type": "TextBlock",
+                      "text": "TEMP",
+                      "size": "Small",
+                      "isSubtle": true,
+                      "spacing": "Small"
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${cpuTemp} | ${gpuTemp}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    },
+                    {
+                      "type": "TextBlock",
                       "text": "DISK",
                       "size": "Small",
                       "isSubtle": true,
@@ -157,9 +171,10 @@ namespace System_Monitor.Services
                       "type": "FactSet",
                       "facts": [
                         { "title": "CPU:", "value": "${cpu}" },
-                        { "title": "iGPU:", "value": "${igpu}" },
-                        { "title": "dGPU:", "value": "${dgpu}" },
-                        { "title": "RAM:", "value": "${ram}" }
+                        { "title": "CPU Clock:", "value": "${cpuClock}" },
+                        { "title": "CPU Temp:", "value": "${cpuTemp}" },
+                        { "title": "RAM:", "value": "${ram}" },
+                        { "title": "Disk:", "value": "${disk}" }
                       ]
                     }
                   ]
@@ -171,7 +186,10 @@ namespace System_Monitor.Services
                     {
                       "type": "FactSet",
                       "facts": [
-                        { "title": "Disk:", "value": "${disk}" },
+                        { "title": "iGPU:", "value": "${igpu}" },
+                        { "title": "dGPU:", "value": "${dgpu}" },
+                        { "title": "GPU Temp:", "value": "${gpuTemp}" },
+                        { "title": "GPU VRAM:", "value": "${gpuVram}" },
                         { "title": "Net ↓:", "value": "${netDown}" },
                         { "title": "Net ↑:", "value": "${netUp}" }
                       ]
@@ -241,7 +259,7 @@ namespace System_Monitor.Services
                       "items": [
                         {
                           "type": "TextBlock",
-                          "text": "Compute & Memory",
+                          "text": "Processor & Memory",
                           "weight": "Bolder",
                           "size": "Medium"
                         },
@@ -250,9 +268,31 @@ namespace System_Monitor.Services
                           "spacing": "Small",
                           "facts": [
                             { "title": "Processor (CPU):", "value": "${cpu}" },
+                            { "title": "CPU Clock:", "value": "${cpuClock}" },
+                            { "title": "CPU Temp:", "value": "${cpuTemp}" },
+                            { "title": "Memory (RAM):", "value": "${ram}" }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "Column",
+                      "width": "stretch",
+                      "items": [
+                        {
+                          "type": "TextBlock",
+                          "text": "Graphics (GPU)",
+                          "weight": "Bolder",
+                          "size": "Medium"
+                        },
+                        {
+                          "type": "FactSet",
+                          "spacing": "Small",
+                          "facts": [
                             { "title": "Intel GPU:", "value": "${igpu}" },
                             { "title": "NVIDIA GPU:", "value": "${dgpu}" },
-                            { "title": "Memory (RAM):", "value": "${ram}" }
+                            { "title": "GPU Temp:", "value": "${gpuTemp}" },
+                            { "title": "GPU VRAM:", "value": "${gpuVram}" }
                           ]
                         }
                       ]

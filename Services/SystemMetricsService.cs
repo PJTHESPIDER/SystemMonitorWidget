@@ -100,6 +100,10 @@ namespace System_Monitor.Services
                 if (_settings.ShowDisk) UpdateDisk();
                 if (_settings.ShowNetwork) UpdateNetwork();
                 if (_settings.ShowGpu) UpdateGpuBestEffort();
+                if (_settings.ShowCpuTemp) UpdateCpuTemp();
+                if (_settings.ShowGpuTemp) UpdateGpuTemp();
+                if (_settings.ShowGpuVram) UpdateGpuVram();
+                if (_settings.ShowCpuClock) UpdateCpuClock();
             }
             catch
             {
@@ -220,6 +224,81 @@ namespace System_Monitor.Services
             {
                 // ignore
             }
+        }
+
+        private void UpdateCpuTemp()
+        {
+            try
+            {
+                using var searcher = new ManagementObjectSearcher("root\\WMI", "SELECT * FROM MSAcpi_ThermalZoneTemperature");
+                var collection = searcher.Get();
+                var temps = collection.Cast<ManagementObject>()
+                    .Select(mo => TryGetDouble(mo, "CurrentTemperature"))
+                    .Where(v => v.HasValue)
+                    .Select(v => (v!.Value - 273.2) / 10.0)
+                    .Where(t => t > 0 && t < 200)
+                    .ToList();
+                if (temps.Count > 0)
+                {
+                    Dispatch(() => _model.CpuTemperature = temps.Average());
+                }
+            }
+            catch { }
+        }
+
+        private void UpdateGpuTemp()
+        {
+            try
+            {
+                var temp = _gpuService.GetGpuTemperatureBestEffort();
+                Dispatch(() => _model.GpuTemperature = temp);
+            }
+            catch { }
+        }
+
+        private void UpdateGpuVram()
+        {
+            try
+            {
+                var (used, total) = _gpuService.GetGpuVramBestEffort();
+                Dispatch(() =>
+                {
+                    _model.GpuVramUsedBytes = used;
+                    _model.GpuVramTotalBytes = total;
+                });
+            }
+            catch { }
+        }
+
+        private void UpdateCpuClock()
+        {
+            try
+            {
+                using var searcher = new ManagementObjectSearcher("root\\CIMV2",
+                    "SELECT CurrentClockSpeed FROM Win32_Processor");
+                var speeds = searcher.Get()
+                    .Cast<ManagementObject>()
+                    .Select(mo => TryGetDouble(mo, "CurrentClockSpeed"))
+                    .Where(v => v.HasValue)
+                    .Select(v => v!.Value)
+                    .ToList();
+                if (speeds.Count > 0)
+                {
+                    Dispatch(() => _model.CpuClockMHz = speeds.Average());
+                }
+            }
+            catch { }
+        }
+
+        private static double? TryGetDouble(ManagementObject mo, string prop)
+        {
+            try
+            {
+                if (mo[prop] != null && double.TryParse(mo[prop].ToString(), out var v))
+                    return v;
+            }
+            catch { }
+            return null;
         }
 
         private static void UpdateSeries(System.Collections.ObjectModel.ObservableCollection<double> series, double value, int maxPoints = 30)

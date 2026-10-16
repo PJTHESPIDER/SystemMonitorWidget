@@ -6,11 +6,12 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:local="using:System_Monitor.Converters"
     mc:Ignorable="d"
-    Width="520" Height="300">
+    Width="540" Height="360">
 
     <UserControl.Resources>
         <local:PercentageConverter x:Key="PercentageConverter" />
         <local:NetworkConverter x:Key="NetworkConverter" />
+        <local:TemperatureConverter x:Key="TemperatureConverter" />
     </UserControl.Resources>
 
     <Border Padding="12" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" CornerRadius="8" >
@@ -37,33 +38,49 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- Left: numeric list -->
-                <StackPanel Grid.Column="0" Spacing="8" Margin="0,0,24,0">
+                <StackPanel Grid.Column="0" Spacing="6" Margin="0,0,24,0">
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
-                        <TextBlock Text="CPU:" Width="50"/>
+                        <TextBlock Text="CPU:" Width="75"/>
                         <TextBlock Text="{Binding CpuPercent, Converter={StaticResource PercentageConverter}}" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
-                        <TextBlock Text="iGPU:" Width="50"/>
+                        <TextBlock Text="CPU Clock:" Width="75"/>
+                        <TextBlock Text="{Binding CpuClockDisplay}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
+                        <TextBlock Text="iGPU:" Width="75"/>
                         <TextBlock Text="{Binding GpuPercent, Converter={StaticResource PercentageConverter}, TargetNullValue=N/A}" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
-                        <TextBlock Text="dGPU:" Width="50"/>
+                        <TextBlock Text="dGPU:" Width="75"/>
                         <TextBlock Text="{Binding NvidiaGpuPercent, Converter={StaticResource PercentageConverter}, TargetNullValue=N/A}" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
-                        <TextBlock Text="RAM:" Width="50"/>
+                        <TextBlock Text="CPU Temp:" Width="75"/>
+                        <TextBlock Text="{Binding CpuTemperature, Converter={StaticResource TemperatureConverter}, TargetNullValue=N/A}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
+                        <TextBlock Text="GPU Temp:" Width="75"/>
+                        <TextBlock Text="{Binding GpuTemperature, Converter={StaticResource TemperatureConverter}, TargetNullValue=N/A}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
+                        <TextBlock Text="GPU VRAM:" Width="75"/>
+                        <TextBlock Text="{Binding GpuVramDisplay, TargetNullValue=N/A}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
+                        <TextBlock Text="RAM:" Width="75"/>
                         <TextBlock Text="{Binding RamDisplay}" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
-                        <TextBlock Text="Disk:" Width="50"/>
+                        <TextBlock Text="Disk:" Width="75"/>
                         <TextBlock Text="{Binding DiskDisplay}" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
-                        <TextBlock Text="Net ↓:" Width="50"/>
+                        <TextBlock Text="Net ↓:" Width="75"/>
                         <TextBlock Text="{Binding NetworkDownloadBytesPerSec, Converter={StaticResource NetworkConverter}}" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
-                        <TextBlock Text="Net ↑:" Width="50"/>
+                        <TextBlock Text="Net ↑:" Width="75"/>
                         <TextBlock Text="{Binding NetworkUploadBytesPerSec, Converter={StaticResource NetworkConverter}}" />
                     </StackPanel>
                 </StackPanel>
