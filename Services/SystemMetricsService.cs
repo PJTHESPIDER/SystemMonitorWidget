@@ -8,7 +8,6 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System_Monitor.Models;
-using Microsoft.UI.Dispatching;
 
 namespace System_Monitor.Services
 {
@@ -26,13 +25,11 @@ namespace System_Monitor.Services
         private long _prevNetworkBytesSent;
         private PerformanceCounter? _diskReadBytesPerSec;
         private PerformanceCounter? _diskWriteBytesPerSec;
-        private readonly DispatcherQueue? _dispatcher;
 
-        public SystemMetricsService(SystemMetrics model, WidgetSettings settings, DispatcherQueue? dispatcher = null)
+        public SystemMetricsService(SystemMetrics model, WidgetSettings settings)
         {
             _model = model;
             _settings = settings;
-            _dispatcher = dispatcher;
             _interval = TimeSpan.FromSeconds(settings.RefreshIntervalSeconds);
 
             // Prepare performance counters for disk IO (may throw on systems without counters)
@@ -79,16 +76,9 @@ namespace System_Monitor.Services
             _diskWriteBytesPerSec?.Dispose();
         }
 
-        private void Dispatch(Action action)
+        private static void Dispatch(Action action)
         {
-            if (_dispatcher != null)
-            {
-                _dispatcher.TryEnqueue(() => action());
-            }
-            else
-            {
-                action();
-            }
+            action();
         }
 
         private void OnTimer(object? state)

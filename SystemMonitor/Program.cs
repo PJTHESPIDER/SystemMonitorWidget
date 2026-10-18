@@ -13,61 +13,26 @@ namespace System_Monitor
         {
             WinRT.ComWrappersSupport.InitializeComWrappers();
 
-            bool isComServer = args.Any(arg =>
-                arg.Contains("-RegisterProcessAsComServer", StringComparison.OrdinalIgnoreCase) ||
-                arg.Contains("/RegisterProcessAsComServer", StringComparison.OrdinalIgnoreCase));
+            // Running as out-of-process COM Server for the Windows 11 Widget Board
+            uint cookie = 0;
+            int hr = ComServer.CoRegisterClassObject(
+                SystemMonitorWidgetProvider.Clsid,
+                new WidgetProviderFactory<SystemMonitorWidgetProvider>(),
+                ComServer.CLSCTX_LOCAL_SERVER,
+                ComServer.REGCLS_MULTIPLEUSE,
+                out cookie);
 
-            if (isComServer)
+            if (hr < 0)
             {
-                // Running as out-of-process COM Server for the Windows 11 Widget Board
-                uint cookie = 0;
-                int hr = ComServer.CoRegisterClassObject(
-                    SystemMonitorWidgetProvider.Clsid,
-                    new WidgetProviderFactory<SystemMonitorWidgetProvider>(),
-                    ComServer.CLSCTX_LOCAL_SERVER,
-                    ComServer.REGCLS_MULTIPLEUSE,
-                    out cookie);
-
-                if (hr < 0)
-                {
-                    Marshal.ThrowExceptionForHR(hr);
-                }
-
-                // Wait until all widgets are deactivated/deleted or host disconnects
-                SystemMonitorWidgetProvider.WaitForCompletion();
-
-                if (cookie != 0)
-                {
-                    ComServer.CoRevokeClassObject(cookie);
-                }
+                Marshal.ThrowExceptionForHR(hr);
             }
-            else
+
+            // Wait until all widgets are deactivated/deleted or host disconnects
+            SystemMonitorWidgetProvider.WaitForCompletion();
+
+            if (cookie != 0)
             {
-                // Started directly by user (desktop / debug view)
-                uint cookie = 0;
-                try
-                {
-                    ComServer.CoRegisterClassObject(
-                        SystemMonitorWidgetProvider.Clsid,
-                        new WidgetProviderFactory<SystemMonitorWidgetProvider>(),
-                        ComServer.CLSCTX_LOCAL_SERVER,
-                        ComServer.REGCLS_MULTIPLEUSE,
-                        out cookie);
-                }
-                catch { }
-
-                global::Microsoft.UI.Xaml.Application.Start((p) =>
-                {
-                    var context = new global::Microsoft.UI.Dispatching.DispatcherQueueSynchronizationContext(
-                        global::Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
-                    global::System.Threading.SynchronizationContext.SetSynchronizationContext(context);
-                    new App();
-                });
-
-                if (cookie != 0)
-                {
-                    try { ComServer.CoRevokeClassObject(cookie); } catch { }
-                }
+                ComServer.CoRevokeClassObject(cookie);
             }
         }
     }

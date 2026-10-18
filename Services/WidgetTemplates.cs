@@ -14,56 +14,26 @@ namespace System_Monitor.Services
             };
         }
 
-        public const string SmallTemplate = """
+                public const string SmallTemplate = """
         {
           "type": "AdaptiveCard",
           "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
           "version": "1.5",
           "body": [
             {
-              "type": "TextBlock",
-              "text": "System Monitor",
-              "weight": "Bolder",
-              "size": "Small",
-              "spacing": "None"
-            },
-            {
               "type": "ColumnSet",
               "spacing": "Small",
+              "separator": true,
               "columns": [
                 {
                   "type": "Column",
-                  "width": "stretch",
+                  "width": "auto",
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "CPU",
-                      "size": "Small",
-                      "isSubtle": true,
-                      "spacing": "None"
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${cpu}",
-                      "size": "Medium",
+                      "text": "CPU Temp",
                       "weight": "Bolder",
-                      "color": "Accent",
-                      "spacing": "None"
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "RAM",
-                      "size": "Small",
-                      "isSubtle": true,
-                      "spacing": "Small"
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${ram}",
-                      "size": "Small",
-                      "weight": "Bolder",
-                      "wrap": true,
-                      "spacing": "None"
+                      "size": "Small"
                     }
                   ]
                 },
@@ -73,46 +43,106 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "GPU (i|d)",
-                      "size": "Small",
-                      "isSubtle": true,
-                      "spacing": "None"
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${igpu} | ${dgpu}",
-                      "size": "Medium",
+                      "text": "${cpuTemp}",
                       "weight": "Bolder",
-                      "spacing": "None"
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "TEMP",
                       "size": "Small",
-                      "isSubtle": true,
-                      "spacing": "Small"
-                    },
+                      "horizontalAlignment": "Center"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "ColumnSet",
+              "spacing": "Small",
+              "separator": true,
+              "columns": [
+                {
+                  "type": "Column",
+                  "width": "auto",
+                  "items": [
                     {
                       "type": "TextBlock",
-                      "text": "${cpuTemp} | ${gpuTemp}",
-                      "size": "Medium",
+                      "text": "VRAM",
                       "weight": "Bolder",
-                      "spacing": "None"
-                    },
+                      "size": "Small"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
                     {
                       "type": "TextBlock",
-                      "text": "DISK",
-                      "size": "Small",
-                      "isSubtle": true,
-                      "spacing": "Small"
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${disk}",
-                      "size": "Small",
+                      "text": "${gpuVramTotal}",
                       "weight": "Bolder",
-                      "wrap": true,
-                      "spacing": "None"
+                      "size": "Small",
+                      "horizontalAlignment": "Center"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "ColumnSet",
+              "spacing": "Small",
+              "separator": true,
+              "columns": [
+                {
+                  "type": "Column",
+                  "width": "auto",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "RAM",
+                      "weight": "Bolder",
+                      "size": "Small"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "${ramTotal}",
+                      "weight": "Bolder",
+                      "size": "Small",
+                      "horizontalAlignment": "Center"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "ColumnSet",
+              "spacing": "Small",
+              "separator": true,
+              "columns": [
+                {
+                  "type": "Column",
+                  "width": "auto",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Storage",
+                      "weight": "Bolder",
+                      "size": "Small"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "${diskTotal}",
+                      "weight": "Bolder",
+                      "size": "Small",
+                      "horizontalAlignment": "Center"
                     }
                   ]
                 }
@@ -120,16 +150,22 @@ namespace System_Monitor.Services
             }
           ]
         }
-        """;
-
-        public const string MediumTemplate = """
+        """;public const string MediumTemplate = """
         {
           "type": "AdaptiveCard",
           "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
           "version": "1.5",
           "body": [
             {
+              "type": "TextBlock",
+              "text": "CPU",
+              "weight": "Bolder",
+              "size": "Small",
+              "spacing": "Small"
+            },
+            {
               "type": "ColumnSet",
+              "spacing": "None",
               "columns": [
                 {
                   "type": "Column",
@@ -137,45 +173,87 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "System Monitor",
+                      "text": "Usage",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${cpu}",
+                      "size": "Medium",
                       "weight": "Bolder",
-                      "size": "Medium"
+                      "spacing": "None"
                     }
                   ]
                 },
                 {
                   "type": "Column",
-                  "width": "auto",
+                  "width": "stretch",
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "${lastUpdated}",
+                      "text": "Speed",
                       "size": "Small",
-                      "isSubtle": true,
-                      "horizontalAlignment": "Right"
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${cpuClock}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Temp",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${cpuTemp}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
                     }
                   ]
                 }
               ]
             },
             {
+              "type": "TextBlock",
+              "text": "GPU",
+              "weight": "Bolder",
+              "size": "Small",
+              "spacing": "Small",
+              "separator": true
+            },
+            {
               "type": "ColumnSet",
-              "spacing": "Medium",
-              "separator": true,
+              "spacing": "None",
               "columns": [
                 {
                   "type": "Column",
                   "width": "stretch",
                   "items": [
                     {
-                      "type": "FactSet",
-                      "facts": [
-                        { "title": "CPU:", "value": "${cpu}" },
-                        { "title": "CPU Clock:", "value": "${cpuClock}" },
-                        { "title": "CPU Temp:", "value": "${cpuTemp}" },
-                        { "title": "RAM:", "value": "${ram}" },
-                        { "title": "Disk:", "value": "${disk}" }
-                      ]
+                      "type": "TextBlock",
+                      "text": "Usage",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${gpu}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
                     }
                   ]
                 },
@@ -184,15 +262,178 @@ namespace System_Monitor.Services
                   "width": "stretch",
                   "items": [
                     {
-                      "type": "FactSet",
-                      "facts": [
-                        { "title": "iGPU:", "value": "${igpu}" },
-                        { "title": "dGPU:", "value": "${dgpu}" },
-                        { "title": "GPU Temp:", "value": "${gpuTemp}" },
-                        { "title": "GPU VRAM:", "value": "${gpuVram}" },
-                        { "title": "Net ↓:", "value": "${netDown}" },
-                        { "title": "Net ↑:", "value": "${netUp}" }
-                      ]
+                      "type": "TextBlock",
+                      "text": "Temp",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${gpuTemp}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "VRAM Used",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${gpuVramUsed}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "TextBlock",
+              "text": "Memory (RAM)",
+              "weight": "Bolder",
+              "size": "Small",
+              "spacing": "Small",
+              "separator": true
+            },
+            {
+              "type": "ColumnSet",
+              "spacing": "None",
+              "columns": [
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Used",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${ramUsed}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Total",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${ramTotal}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Usage",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${ramPercent}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "TextBlock",
+              "text": "Storage (Disk)",
+              "weight": "Bolder",
+              "size": "Small",
+              "spacing": "Small",
+              "separator": true
+            },
+            {
+              "type": "ColumnSet",
+              "spacing": "None",
+              "columns": [
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Used",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${diskUsed}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Total",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${diskTotal}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Usage",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${diskPercent}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
                     }
                   ]
                 }
@@ -209,7 +450,16 @@ namespace System_Monitor.Services
           "version": "1.5",
           "body": [
             {
+              "type": "TextBlock",
+              "text": "Processor (CPU)",
+              "weight": "Bolder",
+              "size": "Medium",
+              "spacing": "Medium",
+              "separator": true
+            },
+            {
               "type": "ColumnSet",
+              "spacing": "Small",
               "columns": [
                 {
                   "type": "Column",
@@ -217,13 +467,91 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "System Monitor",
-                      "weight": "Bolder",
-                      "size": "Large"
+                      "text": "CPU Load",
+                      "size": "Small",
+                      "isSubtle": true
                     },
                     {
                       "type": "TextBlock",
-                      "text": "Real-time system performance metrics",
+                      "text": "${cpu}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Clock Speed",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${cpuClock}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Temperature",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${cpuTemp}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "TextBlock",
+              "text": "Graphics (GPU)",
+              "weight": "Bolder",
+              "size": "Medium",
+              "spacing": "Medium",
+              "separator": true
+            },
+            {
+              "type": "ColumnSet",
+              "spacing": "Small",
+              "columns": [
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "GPU Load",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${gpu}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "Intel: ${igpu} | NVIDIA: ${dgpu}",
                       "size": "Small",
                       "isSubtle": true,
                       "spacing": "None"
@@ -232,106 +560,243 @@ namespace System_Monitor.Services
                 },
                 {
                   "type": "Column",
-                  "width": "auto",
+                  "width": "stretch",
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "${lastUpdated}",
+                      "text": "GPU Temp",
                       "size": "Small",
-                      "isSubtle": true,
-                      "horizontalAlignment": "Right"
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${gpuTemp}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Dedicated VRAM",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${gpuVram}",
+                      "size": "Small",
+                      "weight": "Bolder",
+                      "spacing": "None",
+                      "wrap": true
                     }
                   ]
                 }
               ]
             },
             {
-              "type": "Container",
+              "type": "TextBlock",
+              "text": "Memory (RAM)",
+              "weight": "Bolder",
+              "size": "Medium",
               "spacing": "Medium",
-              "separator": true,
-              "items": [
+              "separator": true
+            },
+            {
+              "type": "ColumnSet",
+              "spacing": "Small",
+              "columns": [
                 {
-                  "type": "ColumnSet",
-                  "columns": [
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
                     {
-                      "type": "Column",
-                      "width": "stretch",
-                      "items": [
-                        {
-                          "type": "TextBlock",
-                          "text": "Processor & Memory",
-                          "weight": "Bolder",
-                          "size": "Medium"
-                        },
-                        {
-                          "type": "FactSet",
-                          "spacing": "Small",
-                          "facts": [
-                            { "title": "Processor (CPU):", "value": "${cpu}" },
-                            { "title": "CPU Clock:", "value": "${cpuClock}" },
-                            { "title": "CPU Temp:", "value": "${cpuTemp}" },
-                            { "title": "Memory (RAM):", "value": "${ram}" }
-                          ]
-                        }
-                      ]
+                      "type": "TextBlock",
+                      "text": "Memory Used",
+                      "size": "Small",
+                      "isSubtle": true
                     },
                     {
-                      "type": "Column",
-                      "width": "stretch",
-                      "items": [
-                        {
-                          "type": "TextBlock",
-                          "text": "Graphics (GPU)",
-                          "weight": "Bolder",
-                          "size": "Medium"
-                        },
-                        {
-                          "type": "FactSet",
-                          "spacing": "Small",
-                          "facts": [
-                            { "title": "Intel GPU:", "value": "${igpu}" },
-                            { "title": "NVIDIA GPU:", "value": "${dgpu}" },
-                            { "title": "GPU Temp:", "value": "${gpuTemp}" },
-                            { "title": "GPU VRAM:", "value": "${gpuVram}" }
-                          ]
-                        }
-                      ]
+                      "type": "TextBlock",
+                      "text": "${ramUsed}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Total Memory",
+                      "size": "Small",
+                      "isSubtle": true
                     },
                     {
-                      "type": "Column",
-                      "width": "stretch",
-                      "items": [
-                        {
-                          "type": "TextBlock",
-                          "text": "Storage & Network",
-                          "weight": "Bolder",
-                          "size": "Medium"
-                        },
-                        {
-                          "type": "FactSet",
-                          "spacing": "Small",
-                          "facts": [
-                            { "title": "Storage (Disk):", "value": "${disk}" },
-                            { "title": "Network Download:", "value": "${netDown}" },
-                            { "title": "Network Upload:", "value": "${netUp}" }
-                          ]
-                        }
-                      ]
+                      "type": "TextBlock",
+                      "text": "${ramTotal}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Memory Load",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${ramPercent}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
                     }
                   ]
                 }
               ]
-            }
-          ],
-          "actions": [
+            },
             {
-              "type": "Action.Execute",
-              "title": "🔄 Refresh Metrics",
-              "verb": "refresh"
+              "type": "TextBlock",
+              "text": "Storage (Disk)",
+              "weight": "Bolder",
+              "size": "Medium",
+              "spacing": "Medium",
+              "separator": true
+            },
+            {
+              "type": "ColumnSet",
+              "spacing": "Small",
+              "columns": [
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Disk Used",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${diskUsed}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Disk Total",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${diskTotal}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Disk Load",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${diskPercent}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "TextBlock",
+              "text": "Network",
+              "weight": "Bolder",
+              "size": "Medium",
+              "spacing": "Medium",
+              "separator": true
+            },
+            {
+              "type": "ColumnSet",
+              "spacing": "Small",
+              "columns": [
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Download",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${netDown}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "stretch",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "Upload",
+                      "size": "Small",
+                      "isSubtle": true
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "${netUp}",
+                      "size": "Medium",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                }
+              ]
             }
           ]
         }
         """;
     }
 }
+
 

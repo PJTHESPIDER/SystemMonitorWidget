@@ -180,7 +180,7 @@ namespace System_Monitor.Services
             {
                 if (_metricsService == null)
                 {
-                    _metricsService = new SystemMetricsService(_metrics, _settings, null);
+                    _metricsService = new SystemMetricsService(_metrics, _settings);
                 }
 
                 if (_updateTimer == null)
@@ -234,25 +234,71 @@ namespace System_Monitor.Services
 
         private string CreateDataPayload()
         {
+            string gpu = _metrics.NvidiaGpuPercent.HasValue
+                ? $"{_metrics.NvidiaGpuPercent.Value:F1}%"
+                : (_metrics.GpuPercent.HasValue ? $"{_metrics.GpuPercent.Value:F1}%" : "N/A");
+
+            string cpuTempStr = _metrics.CpuTemperature.HasValue ? $"{_metrics.CpuTemperature.Value:F0}°C" : "N/A";
+            string gpuTempStr = _metrics.GpuTemperature.HasValue ? $"{_metrics.GpuTemperature.Value:F0}°C" : "N/A";
+
+            string tempSummary;
+            if (_metrics.CpuTemperature.HasValue && _metrics.GpuTemperature.HasValue)
+                tempSummary = $"{cpuTempStr} | {gpuTempStr}";
+            else if (_metrics.CpuTemperature.HasValue)
+                tempSummary = cpuTempStr;
+            else if (_metrics.GpuTemperature.HasValue)
+                tempSummary = gpuTempStr;
+            else
+                tempSummary = "N/A";
+
+            string gpuVramUsed = _metrics.GpuVramUsedBytes.HasValue
+                ? ByteFormatter.FormatBytes(_metrics.GpuVramUsedBytes.Value)
+                : "N/A";
+
+            string ramUsed = ByteFormatter.FormatBytes(_metrics.RamUsedBytes);
+            string ramTotal = ByteFormatter.FormatBytes(_metrics.RamTotalBytes);
+            string ramCombined = $"{ramUsed} / {ramTotal}";
+
+            string diskUsed = ByteFormatter.FormatBytes(Math.Max(0, _metrics.DiskUsedBytes));
+            string diskTotal = ByteFormatter.FormatBytes(Math.Max(0, _metrics.DiskTotalBytes));
+            string diskCombined = $"{diskUsed} / {diskTotal}";
+
+            string cpuDetailSmall = _metrics.CpuTemperature.HasValue
+                ? $"{_metrics.CpuClockDisplay} | {cpuTempStr}"
+                : _metrics.CpuClockDisplay;
+
+            string gpuDetailSmall = _metrics.GpuTemperature.HasValue
+                ? $"{gpuTempStr} | {gpuVramUsed}"
+                : gpuVramUsed;
+
             var payload = new
             {
                 cpu = $"{_metrics.CpuPercent:F1}%",
                 cpuClock = _metrics.CpuClockDisplay,
+                cpuDetailSmall,
+                gpuDetailSmall,
+                gpu,
                 igpu = _metrics.GpuPercent.HasValue ? $"{_metrics.GpuPercent.Value:F1}%" : "N/A",
                 dgpu = _metrics.NvidiaGpuPercent.HasValue ? $"{_metrics.NvidiaGpuPercent.Value:F1}%" : "N/A",
                 ram = _metrics.RamDisplay,
-                ramUsed = ByteFormatter.FormatBytes(_metrics.RamUsedBytes),
-                ramTotal = ByteFormatter.FormatBytes(_metrics.RamTotalBytes),
-                ramPercent = $"{_metrics.RamPercent:F1}%",
+                ramUsed,
+                ramTotal,
+                ramCombined,
+                ramPercent = $"{_metrics.RamPercent:F0}%",
+                ramCompact = $"{ramUsed} ({_metrics.RamPercent:F0}%)",
                 disk = _metrics.DiskDisplay,
-                diskUsed = ByteFormatter.FormatBytes(Math.Max(0, _metrics.DiskUsedBytes)),
-                diskTotal = ByteFormatter.FormatBytes(Math.Max(0, _metrics.DiskTotalBytes)),
-                diskPercent = $"{_metrics.DiskPercent:F1}%",
+                diskUsed,
+                diskTotal,
+                diskCombined,
+                diskPercent = $"{_metrics.DiskPercent:F0}%",
+                diskCompact = $"{diskUsed} ({_metrics.DiskPercent:F0}%)",
                 netDown = ByteFormatter.FormatNetworkSpeed(_metrics.NetworkDownloadBytesPerSec),
                 netUp = ByteFormatter.FormatNetworkSpeed(_metrics.NetworkUploadBytesPerSec),
                 cpuTemp = _metrics.CpuTemperature.HasValue ? $"{_metrics.CpuTemperature.Value:F1}°C" : "N/A",
                 gpuTemp = _metrics.GpuTemperature.HasValue ? $"{_metrics.GpuTemperature.Value:F1}°C" : "N/A",
+                tempSummary,
                 gpuVram = _metrics.GpuVramDisplay ?? "N/A",
+                gpuVramUsed,
                 lastUpdated = DateTime.Now.ToString("h:mm:ss tt")
             };
 

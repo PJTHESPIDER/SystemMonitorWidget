@@ -8,6 +8,5 @@
   <Widget Id="SystemMonitorWidget"
           DisplayName="System Monitor"
           Description="Shows CPU, GPU, RAM, Disk and Network usage"
-          AllowedSizes="Small,Medium,Large"
-          EntryPoint="System_Monitor.Views.WidgetView" />
+          AllowedSizes="Small,Medium,Large" />
 </Widgets>

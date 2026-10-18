@@ -58,7 +58,7 @@ $manifestText = Get-Content -Raw $packageManifest
 $manifestText = $manifestText -replace '(<Identity\b[^>]*\bName=")[^"]+("[^>]*>)', ('$1' + $IdentityName + '$2')
 $manifestText = $manifestText -replace '(<Identity\b[^>]*\bPublisher=")[^"]+("[^>]*>)', ('$1CN=' + $PublisherCN + '$2')
 $manifestText = $manifestText -replace '\$targetnametoken\$\.exe', 'SystemMonitor.exe'
-$manifestText = $manifestText -replace '\$targetentrypoint\$', 'SystemMonitor.App'
+$manifestText = $manifestText -replace '\$targetentrypoint\$', 'Windows.FullTrustApplication'
 $processorArchitecture = switch ($Runtime) {
     "win-x86" { "x86" }
     "win-arm64" { "arm64" }
@@ -71,10 +71,23 @@ if ($manifestText -match 'ProcessorArchitecture="[^"]+"') {
 }
 Set-Content -Path $manifestPathInRoot -Value $manifestText -Encoding utf8
 
-# Create certificate PFX
+# Create or reuse certificate PFX
 $pfxPath = Join-Path $msixOutDir "testcert.pfx"
 $publisherString = "CN=$PublisherCN"
-$cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $publisherString -KeyExportPolicy Exportable -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(10)
+$cert = $null
+$trustedRoots = Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -eq $publisherString }
+foreach ($tr in $trustedRoots) {
+    $myCert = Get-Item "Cert:\CurrentUser\My\$($tr.Thumbprint)" -ErrorAction SilentlyContinue
+    if ($myCert -and $myCert.HasPrivateKey) {
+        $cert = $myCert
+        Write-Host "Reusing trusted root certificate: $($cert.Thumbprint)"
+        break
+    }
+}
+if (-not $cert) {
+    Write-Host "Creating new self-signed certificate..."
+    $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $publisherString -KeyExportPolicy Exportable -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(10)
+}
 if (-not $cert) { Fail "Certificate creation failed." }
 $securePwd = ConvertTo-SecureString -String $CertPassword -Force -AsPlainText
 Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $securePwd | Out-Null

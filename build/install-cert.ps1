@@ -11,11 +11,8 @@ $certBytes = $certObj.Export([System.Security.Cryptography.X509Certificates.X509
 [System.IO.File]::WriteAllBytes($cerPath, $certBytes)
 Write-Host "Exported .cer to: $cerPath"
 
-# Step 2: Install to LocalMachine stores using certutil (requires elevation)
-Write-Host "Installing to LocalMachine\TrustedPeople..."
-& certutil -addstore "TrustedPeople" $cerPath
-
-Write-Host "Installing to LocalMachine\Root..."
-& certutil -addstore "Root" $cerPath
+# Step 2: Install to CurrentUser stores using certutil
+Write-Host "Installing to CurrentUser\TrustedPeople..."
+& certutil -user -addstore "TrustedPeople" $cerPath
 
 Write-Host "Done. Certificate installed."
