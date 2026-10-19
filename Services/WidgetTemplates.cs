@@ -22,8 +22,7 @@ namespace System_Monitor.Services
           "body": [
             {
               "type": "ColumnSet",
-              "spacing": "Small",
-              "separator": true,
+              "spacing": "None",
               "columns": [
                 {
                   "type": "Column",
@@ -31,22 +30,49 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "CPU Temp",
+                      "text": "CPU",
                       "weight": "Bolder",
-                      "size": "Small"
+                      "size": "Small",
+                      "spacing": "None"
                     }
                   ]
                 },
                 {
                   "type": "Column",
-                  "width": "stretch",
+                  "width": "auto",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "${cpu}",
+                      "size": "ExtraSmall",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "auto",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "${cpuClock}",
+                      "size": "ExtraSmall",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "auto",
                   "items": [
                     {
                       "type": "TextBlock",
                       "text": "${cpuTemp}",
+                      "size": "ExtraSmall",
                       "weight": "Bolder",
-                      "size": "Small",
-                      "horizontalAlignment": "Center"
+                      "spacing": "None"
                     }
                   ]
                 }
@@ -54,8 +80,7 @@ namespace System_Monitor.Services
             },
             {
               "type": "ColumnSet",
-              "spacing": "Small",
-              "separator": true,
+              "spacing": "None",
               "columns": [
                 {
                   "type": "Column",
@@ -63,22 +88,49 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "VRAM",
+                      "text": "GPU",
                       "weight": "Bolder",
-                      "size": "Small"
+                      "size": "Small",
+                      "spacing": "None"
                     }
                   ]
                 },
                 {
                   "type": "Column",
-                  "width": "stretch",
+                  "width": "auto",
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "${gpuVramTotal}",
+                      "text": "${gpu}",
+                      "size": "ExtraSmall",
                       "weight": "Bolder",
-                      "size": "Small",
-                      "horizontalAlignment": "Center"
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "auto",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "${gpuTemp}",
+                      "size": "ExtraSmall",
+                      "weight": "Bolder",
+                      "spacing": "None"
+                    }
+                  ]
+                },
+                {
+                  "type": "Column",
+                  "width": "auto",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "${gpuVram}",
+                      "size": "ExtraSmall",
+                      "weight": "Bolder",
+                      "spacing": "None"
                     }
                   ]
                 }
@@ -86,8 +138,7 @@ namespace System_Monitor.Services
             },
             {
               "type": "ColumnSet",
-              "spacing": "Small",
-              "separator": true,
+              "spacing": "None",
               "columns": [
                 {
                   "type": "Column",
@@ -97,20 +148,21 @@ namespace System_Monitor.Services
                       "type": "TextBlock",
                       "text": "RAM",
                       "weight": "Bolder",
-                      "size": "Small"
+                      "size": "Small",
+                      "spacing": "None"
                     }
                   ]
                 },
                 {
                   "type": "Column",
-                  "width": "stretch",
+                  "width": "auto",
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "${ramTotal}",
+                      "text": "${ram}",
+                      "size": "ExtraSmall",
                       "weight": "Bolder",
-                      "size": "Small",
-                      "horizontalAlignment": "Center"
+                      "spacing": "None"
                     }
                   ]
                 }
@@ -118,8 +170,7 @@ namespace System_Monitor.Services
             },
             {
               "type": "ColumnSet",
-              "spacing": "Small",
-              "separator": true,
+              "spacing": "None",
               "columns": [
                 {
                   "type": "Column",
@@ -127,22 +178,23 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "Storage",
+                      "text": "Disk",
                       "weight": "Bolder",
-                      "size": "Small"
+                      "size": "Small",
+                      "spacing": "None"
                     }
                   ]
                 },
                 {
                   "type": "Column",
-                  "width": "stretch",
+                  "width": "auto",
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "${diskTotal}",
+                          "text": "${disk}",
+                      "size": "ExtraSmall",
                       "weight": "Bolder",
-                      "size": "Small",
-                      "horizontalAlignment": "Center"
+                      "spacing": "None"
                     }
                   ]
                 }
@@ -231,8 +283,7 @@ namespace System_Monitor.Services
               "text": "GPU",
               "weight": "Bolder",
               "size": "Small",
-              "spacing": "Small",
-              "separator": true
+              "spacing": "Small"
             },
             {
               "type": "ColumnSet",
@@ -282,13 +333,13 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "VRAM Used",
+                      "text": "VRAM",
                       "size": "Small",
                       "isSubtle": true
                     },
                     {
                       "type": "TextBlock",
-                      "text": "${gpuVramUsed}",
+                      "text": "${gpuVram}",
                       "size": "Medium",
                       "weight": "Bolder",
                       "spacing": "None"
@@ -302,8 +353,7 @@ namespace System_Monitor.Services
               "text": "Memory (RAM)",
               "weight": "Bolder",
               "size": "Small",
-              "spacing": "Small",
-              "separator": true
+              "spacing": "Small"
             },
             {
               "type": "ColumnSet",
@@ -315,51 +365,13 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "Used",
+                      "text": "Used / Total",
                       "size": "Small",
                       "isSubtle": true
                     },
                     {
                       "type": "TextBlock",
-                      "text": "${ramUsed}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
-                    }
-                  ]
-                },
-                {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "Total",
-                      "size": "Small",
-                      "isSubtle": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${ramTotal}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
-                    }
-                  ]
-                },
-                {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "Usage",
-                      "size": "Small",
-                      "isSubtle": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${ramPercent}",
+                      "text": "${ram}",
                       "size": "Medium",
                       "weight": "Bolder",
                       "spacing": "None"
@@ -373,8 +385,7 @@ namespace System_Monitor.Services
               "text": "Storage (Disk)",
               "weight": "Bolder",
               "size": "Small",
-              "spacing": "Small",
-              "separator": true
+              "spacing": "Small"
             },
             {
               "type": "ColumnSet",
@@ -386,51 +397,13 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "Used",
+                      "text": "Used / Total",
                       "size": "Small",
                       "isSubtle": true
                     },
                     {
                       "type": "TextBlock",
-                      "text": "${diskUsed}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
-                    }
-                  ]
-                },
-                {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "Total",
-                      "size": "Small",
-                      "isSubtle": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${diskTotal}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
-                    }
-                  ]
-                },
-                {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "Usage",
-                      "size": "Small",
-                      "isSubtle": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${diskPercent}",
+                      "text": "${disk}",
                       "size": "Medium",
                       "weight": "Bolder",
                       "spacing": "None"
@@ -525,8 +498,7 @@ namespace System_Monitor.Services
               "text": "Graphics (GPU)",
               "weight": "Bolder",
               "size": "Medium",
-              "spacing": "Medium",
-              "separator": true
+              "spacing": "Medium"
             },
             {
               "type": "ColumnSet",
@@ -604,8 +576,7 @@ namespace System_Monitor.Services
               "text": "Memory (RAM)",
               "weight": "Bolder",
               "size": "Medium",
-              "spacing": "Medium",
-              "separator": true
+              "spacing": "Medium"
             },
             {
               "type": "ColumnSet",
@@ -617,51 +588,13 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "Memory Used",
+                      "text": "Used / Total",
                       "size": "Small",
                       "isSubtle": true
                     },
                     {
                       "type": "TextBlock",
-                      "text": "${ramUsed}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
-                    }
-                  ]
-                },
-                {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "Total Memory",
-                      "size": "Small",
-                      "isSubtle": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${ramTotal}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
-                    }
-                  ]
-                },
-                {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "Memory Load",
-                      "size": "Small",
-                      "isSubtle": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${ramPercent}",
+                      "text": "${ram}",
                       "size": "Medium",
                       "weight": "Bolder",
                       "spacing": "None"
@@ -675,8 +608,7 @@ namespace System_Monitor.Services
               "text": "Storage (Disk)",
               "weight": "Bolder",
               "size": "Medium",
-              "spacing": "Medium",
-              "separator": true
+              "spacing": "Medium"
             },
             {
               "type": "ColumnSet",
@@ -688,51 +620,13 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "Disk Used",
+                      "text": "Used / Total",
                       "size": "Small",
                       "isSubtle": true
                     },
                     {
                       "type": "TextBlock",
-                      "text": "${diskUsed}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
-                    }
-                  ]
-                },
-                {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "Disk Total",
-                      "size": "Small",
-                      "isSubtle": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${diskTotal}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
-                    }
-                  ]
-                },
-                {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "Disk Load",
-                      "size": "Small",
-                      "isSubtle": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${diskPercent}",
+                      "text": "${disk}",
                       "size": "Medium",
                       "weight": "Bolder",
                       "spacing": "None"
@@ -746,8 +640,7 @@ namespace System_Monitor.Services
               "text": "Network",
               "weight": "Bolder",
               "size": "Medium",
-              "spacing": "Medium",
-              "separator": true
+              "spacing": "Medium"
             },
             {
               "type": "ColumnSet",
