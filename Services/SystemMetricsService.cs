@@ -14,9 +14,8 @@ namespace System_Monitor.Services
     public sealed class SystemMetricsService : IDisposable
     {
         private readonly SystemMetrics _model;
-        private readonly WidgetSettings _settings;
+        private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
         private Timer _timer;
-        private TimeSpan _interval;
         private readonly GpuService _gpuService = new GpuService();
         private ulong _prevIdle;
         private ulong _prevKernel;
@@ -26,11 +25,9 @@ namespace System_Monitor.Services
         private PerformanceCounter? _diskReadBytesPerSec;
         private PerformanceCounter? _diskWriteBytesPerSec;
 
-        public SystemMetricsService(SystemMetrics model, WidgetSettings settings)
+        public SystemMetricsService(SystemMetrics model)
         {
             _model = model;
-            _settings = settings;
-            _interval = TimeSpan.FromSeconds(settings.RefreshIntervalSeconds);
 
             // Prepare performance counters for disk IO (may throw on systems without counters)
             try
@@ -55,18 +52,7 @@ namespace System_Monitor.Services
             _prevNetworkBytesReceived = rx;
             _prevNetworkBytesSent = tx;
 
-            _timer = new Timer(OnTimer, null, TimeSpan.Zero, _interval);
-
-            // react to settings changes (interval)
-            _settings.PropertyChanged += (s, e) =>
-            {
-                if (e.PropertyName == nameof(WidgetSettings.RefreshIntervalSeconds))
-                {
-                    var newInterval = TimeSpan.FromSeconds(_settings.RefreshIntervalSeconds);
-                    _interval = newInterval;
-                    _timer.Change(TimeSpan.Zero, _interval);
-                }
-            };
+            _timer = new Timer(OnTimer, null, TimeSpan.Zero, Interval);
         }
 
         public void Dispose()
@@ -85,15 +71,15 @@ namespace System_Monitor.Services
         {
             try
             {
-                if (_settings.ShowCpu) UpdateCpu();
-                if (_settings.ShowRam) UpdateRam();
-                if (_settings.ShowDisk) UpdateDisk();
-                if (_settings.ShowNetwork) UpdateNetwork();
-                if (_settings.ShowGpu) UpdateGpuBestEffort();
-                if (_settings.ShowCpuTemp) UpdateCpuTemp();
-                if (_settings.ShowGpuTemp) UpdateGpuTemp();
-                if (_settings.ShowGpuVram) UpdateGpuVram();
-                if (_settings.ShowCpuClock) UpdateCpuClock();
+                UpdateCpu();
+                UpdateRam();
+                UpdateDisk();
+                UpdateNetwork();
+                UpdateGpuBestEffort();
+                UpdateCpuTemp();
+                UpdateGpuTemp();
+                UpdateGpuVram();
+                UpdateCpuClock();
             }
             catch
             {
@@ -181,7 +167,7 @@ namespace System_Monitor.Services
             var (rx, tx) = GetTotalNetworkBytes();
             var deltaRx = rx - _prevNetworkBytesReceived;
             var deltaTx = tx - _prevNetworkBytesSent;
-            var seconds = _interval.TotalSeconds;
+            var seconds = Interval.TotalSeconds;
             var rxPerSec = deltaRx / seconds;
             var txPerSec = deltaTx / seconds;
 

@@ -28,7 +28,7 @@ namespace System_Monitor.Services
         private static readonly ManualResetEvent EmptyWidgetListEvent = new(false);
 
         private readonly SystemMetrics _metrics;
-        private readonly WidgetSettings _settings;
+        private static readonly TimeSpan UpdateInterval = TimeSpan.FromSeconds(5);
         private SystemMetricsService? _metricsService;
         private Timer? _updateTimer;
         private readonly object _lock = new();
@@ -36,7 +36,6 @@ namespace System_Monitor.Services
         public SystemMonitorWidgetProvider()
         {
             _metrics = new SystemMetrics();
-            _settings = SettingsStore.LoadAsync().GetAwaiter().GetResult();
 
             try
             {
@@ -180,13 +179,12 @@ namespace System_Monitor.Services
             {
                 if (_metricsService == null)
                 {
-                    _metricsService = new SystemMetricsService(_metrics, _settings);
+                    _metricsService = new SystemMetricsService(_metrics);
                 }
 
                 if (_updateTimer == null)
                 {
-                    var interval = TimeSpan.FromSeconds(Math.Max(1, _settings.RefreshIntervalSeconds));
-                    _updateTimer = new Timer(_ => UpdateAllWidgets(), null, TimeSpan.FromSeconds(1), interval);
+                    _updateTimer = new Timer(_ => UpdateAllWidgets(), null, TimeSpan.FromSeconds(1), UpdateInterval);
                 }
             }
         }
