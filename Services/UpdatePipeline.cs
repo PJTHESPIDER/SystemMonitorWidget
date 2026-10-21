@@ -146,6 +146,21 @@ namespace System_Monitor.Services
         private Task? _inFlightCycle;
 
         /// <summary>
+        /// The generation that admitted the currently in-flight cycle, or
+        /// null when no cycle is in flight.
+        ///
+        /// <para>
+        /// This is what makes the drain boundary survive a synchronous
+        /// deactivation. <see cref="Stop"/> retires the active generation by
+        /// clearing <see cref="_current"/>, so a later
+        /// <see cref="DeactivateAsync"/> no longer sees it. The retired
+        /// generation's collection may still be running, and this field is
+        /// what identifies the generation that actually holds the work.
+        /// </para>
+        /// </summary>
+        private Generation? _inFlightGeneration;
+
+        /// <summary>
         /// Set when a refresh is requested and not yet satisfied by an
         /// admitted collection.
         /// </summary>
@@ -327,31 +342,80 @@ namespace System_Monitor.Services
         /// </summary>
         public void Stop()
         {
+            RetireCurrentGeneration();
+            PulseState();
+        }
+
+        /// <summary>
+        /// Retires the currently active generation: the inactive transition
+        /// and the request to cancel the in-flight run.
+        ///
+        /// <para>
+        /// The inactive transition happens under the same lock that admits a
+        /// cycle, so no new cycle can be admitted after it. Cancellation is
+        /// requested outside the lock, because cancelling a token runs
+        /// registered callbacks synchronously and those callbacks must not
+        /// run while the coordinator state is locked.
+        /// </para>
+        ///
+        /// <para>
+        /// This is shared by <see cref="Stop"/> and
+        /// <see cref="DeactivateAsync"/>, so a synchronous stop followed by
+        /// an awaitable deactivation does not request cancellation twice and
+        /// does not lose the drain boundary.
+        /// </para>
+        /// </summary>
+        private void RetireCurrentGeneration()
+        {
+            RetireCurrentGeneration(out _);
+        }
+
+        /// <summary>
+        /// Retires the currently active generation and reports the generation
+        /// that holds admitted work, so the caller can await its drain.
+        ///
+        /// <para>
+        /// Both values are captured under the <i>same</i> lock acquisition
+        /// as the inactive transition. Capturing them separately would allow
+        /// a reactivation to admit a cycle in between, and the caller would
+        /// then await a generation it never retired and never cancelled.
+        /// </para>
+        /// </summary>
+        private void RetireCurrentGeneration(out Generation? drainTarget)
+        {
             Generation? generation;
+
             lock (_stateLock)
             {
                 if (_disposed)
+                {
+                    drainTarget = null;
                     return;
+                }
 
                 generation = _current;
+
                 // The inactive transition: no cycle may be admitted after
                 // this point, because admission checks this same field
                 // under this same lock.
                 _current = null;
                 _refreshPending = false;
+
+                // The generation that holds admitted work. A generation is
+                // recorded here only once it has admitted a cycle, which is
+                // exactly when the coordinator's per-generation finally
+                // block is guaranteed to complete its Unwound signal. A
+                // generation that never admitted a cycle has no admitted
+                // work to drain.
+                drainTarget = _inFlightGeneration;
             }
 
-            // Cancellation is requested outside the lock: cancelling a token
-            // runs registered callbacks synchronously, and those callbacks
-            // must not run while the coordinator state is locked.
-            if (generation is not null)
-            {
-                CancellationRequestedCount++;
-                try { generation.Cts.Cancel(); }
-                catch (ObjectDisposedException) { }
-            }
+            if (generation is null)
+                return;
 
-            PulseState();
+            CancellationRequestedCount++;
+            try { generation.Cts.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
 
         /// <summary>
@@ -365,6 +429,14 @@ namespace System_Monitor.Services
         /// task-completion signal — not a counter observation and not a
         /// sleep — and this method never blocks the calling thread.</para>
         ///
+        /// <para><b>After a synchronous stop</b>: if the pipeline was already
+        /// deactivated through <see cref="Stop"/>, that call has already
+        /// retired the active generation and requested its cancellation, so
+        /// this method does not cancel it a second time. It still awaits the
+        /// generation that actually holds admitted work — the one that
+        /// admitted the in-flight cycle — so the drain boundary is not lost
+        /// by the earlier synchronous transition.</para>
+        ///
         /// <para><b>Reactivation race</b>: if a new activation is requested
         /// while this method is awaiting, that activation is a separate
         /// generation with its own lifecycle and is <i>not</i> cancelled by
@@ -375,20 +447,14 @@ namespace System_Monitor.Services
         /// </summary>
         public async Task DeactivateAsync(CancellationToken ct = default)
         {
-            Generation? generation;
-            lock (_stateLock)
-            {
-                generation = _current;
-                _current = null;
-                _refreshPending = false;
-            }
+            // Retire the active generation, if any, and capture the
+            // generation that holds admitted work in the same lock
+            // acquisition. This performs the inactive transition and
+            // requests cancellation, exactly as Stop() does.
+            RetireCurrentGeneration(out var generation);
 
             if (generation is not null)
             {
-                CancellationRequestedCount++;
-                try { generation.Cts.Cancel(); }
-                catch (ObjectDisposedException) { }
-
                 // Waits for the generation's cycle loop to unwind.
                 using var registration = ct.Register(
                     static s => ((TaskCompletionSource<bool>)s!).TrySetCanceled(),
@@ -666,6 +732,7 @@ namespace System_Monitor.Services
                         }
 
                         _inFlightCycle = completion.Task;
+                        _inFlightGeneration = generation;
 
                         // This collection satisfies a pending refresh.
                         _refreshPending = false;
@@ -692,7 +759,10 @@ namespace System_Monitor.Services
                         lock (_stateLock)
                         {
                             if (ReferenceEquals(_inFlightCycle, completion.Task))
+                            {
                                 _inFlightCycle = null;
+                                _inFlightGeneration = null;
+                            }
                         }
                         completion.TrySetResult(true);
                     }

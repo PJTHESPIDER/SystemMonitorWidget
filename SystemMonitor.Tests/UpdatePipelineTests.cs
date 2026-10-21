@@ -740,4 +740,167 @@ public class UpdatePipelineTests
         await DrainAsync();
         Assert.Equal(finalCount, collector.StartedCount);
     }
+
+    // -----------------------------------------------------------------
+    // Drain-boundary contract points
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// A synchronous deactivation (a COM widget callback) transitions the
+    /// pipeline to inactive but does not wait for the collector. A later
+    /// awaitable deactivation must still guarantee quiescence of the work
+    /// that was already admitted when the pipeline went inactive.
+    /// </summary>
+    [Fact]
+    public async Task DeactivateAsync_AfterSynchronousStop_StillAwaitsTheInFlightCollection()
+    {
+        var clock = new FakeTimeProvider();
+        var collector = new ControllableCollector();
+        collector.Block();
+        var widgets = OneActiveWidget();
+        var log = new PublicationLog();
+
+        var pipeline = new UpdatePipeline<TestSize>(
+            collector, widgets,
+            snapshot => "payload",
+            (payload, widget) => { log.Record(payload); return Task.CompletedTask; },
+            TimeSpan.FromMinutes(5),
+            clock);
+
+        pipeline.Start();
+        await WithWatchdogAsync(collector.WaitForStart(1));
+
+        // The synchronous half of the contract: the pipeline goes inactive
+        // immediately, without waiting for the blocked collector.
+        pipeline.Stop();
+
+        // The awaitable half must still not complete while the admitted
+        // collection is in flight.
+        var deactivateTask = pipeline.DeactivateAsync();
+        await DrainAsync();
+        Assert.False(deactivateTask.IsCompleted);
+
+        collector.Release();
+        await WithWatchdogAsync(deactivateTask);
+
+        // The retired generation's snapshot was suppressed, and no further
+        // collection was admitted.
+        Assert.Equal(0, log.Count);
+        Assert.Equal(1, collector.StartedCount);
+
+        await WithWatchdogAsync(pipeline.DisposeAsync().AsTask());
+    }
+
+    /// <summary>
+    /// Deactivating a pipeline that was never activated is a no-op: it must
+    /// not start a collection and must complete promptly.
+    /// </summary>
+    [Fact]
+    public async Task DeactivateAsync_BeforeAnyActivation_CompletesWithoutStartingWork()
+    {
+        var clock = new FakeTimeProvider();
+        var collector = new ControllableCollector();
+        var widgets = OneActiveWidget();
+        var log = new PublicationLog();
+
+        var pipeline = new UpdatePipeline<TestSize>(
+            collector, widgets,
+            snapshot => "payload",
+            (payload, widget) => { log.Record(payload); return Task.CompletedTask; },
+            TimeSpan.FromMinutes(5),
+            clock);
+
+        await WithWatchdogAsync(pipeline.DeactivateAsync());
+        await DrainAsync();
+
+        Assert.Equal(0, collector.StartedCount);
+        Assert.Equal(0, log.Count);
+
+        await WithWatchdogAsync(pipeline.DisposeAsync().AsTask());
+    }
+
+    /// <summary>
+    /// The idle boundary must not report idle while publishing is still in
+    /// progress: the admitted cycle is only unwound after collection
+    /// <i>and</i> publishing have both finished.
+    /// </summary>
+    [Fact]
+    public async Task WaitForIdleAsync_CompletesOnlyAfterPublishingHasFinished()
+    {
+        var clock = new FakeTimeProvider();
+        var collector = new ControllableCollector();
+        var widgets = OneActiveWidget();
+        var log = new PublicationLog();
+
+        var publishGate = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var pipeline = new UpdatePipeline<TestSize>(
+            collector, widgets,
+            snapshot => "payload",
+            async (payload, widget) => { await publishGate.Task; log.Record(payload); },
+            TimeSpan.FromMinutes(5),
+            clock);
+
+        pipeline.Start();
+        await WithWatchdogAsync(collector.WaitForStart(1));
+        await WithWatchdogAsync(collector.WaitForSuccess(1));
+
+        // The publish is in progress, so the pipeline is not idle yet.
+        var idleTask = pipeline.WaitForIdleAsync();
+        await DrainAsync();
+        Assert.False(idleTask.IsCompleted);
+
+        publishGate.TrySetResult(true);
+        await WithWatchdogAsync(idleTask);
+        Assert.Equal(1, log.Count);
+
+        await WithWatchdogAsync(pipeline.DisposeAsync().AsTask());
+    }
+
+    /// <summary>
+    /// A reactivation that races with an in-flight deactivation is a
+    /// separate generation: the in-flight deactivation must not cancel it,
+    /// and must not wait for its work either.
+    /// </summary>
+    [Fact]
+    public async Task DeactivateAsync_RacingReactivation_DoesNotCancelTheNewGeneration()
+    {
+        var clock = new FakeTimeProvider();
+        var collector = new ControllableCollector();
+        collector.Block();
+        var widgets = OneActiveWidget();
+        var log = new PublicationLog();
+
+        var pipeline = new UpdatePipeline<TestSize>(
+            collector, widgets,
+            snapshot => "payload",
+            (payload, widget) => { log.Record(payload); return Task.CompletedTask; },
+            TimeSpan.FromMinutes(5),
+            clock);
+
+        pipeline.Start();
+        await WithWatchdogAsync(collector.WaitForStart(1));
+        var oldGeneration = pipeline.CurrentGeneration;
+
+        // The deactivation retires the old generation and waits for it.
+        var deactivateTask = pipeline.DeactivateAsync();
+        await DrainAsync();
+        Assert.False(deactivateTask.IsCompleted);
+
+        // Reactivation while the drain is still pending.
+        pipeline.Start();
+        var newGeneration = pipeline.CurrentGeneration;
+        Assert.NotEqual(oldGeneration, newGeneration);
+
+        collector.Release();
+        await WithWatchdogAsync(deactivateTask);
+
+        // The new generation was neither cancelled nor retired by the
+        // in-flight deactivation.
+        Assert.Equal(newGeneration, pipeline.CurrentGeneration);
+        Assert.True(pipeline.IsRunning);
+
+        await WithWatchdogAsync(pipeline.DisposeAsync().AsTask());
+    }
 }
