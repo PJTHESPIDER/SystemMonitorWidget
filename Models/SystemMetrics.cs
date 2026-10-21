@@ -9,9 +9,13 @@ namespace System_Monitor.Models
     {
         private double _cpuPercent;
         private double? _gpuPercent;
+        private double? _gpuLoadPercent;
+        private double? _integratedGpuLoadPercent;
+        private double? _discreteGpuLoadPercent;
         private double? _nvidiaGpuPercent;
         private double? _cpuTemperature;
         private double? _gpuTemperature;
+        private double? _acpiThermalZoneTemperatureC;
         private double _ramPercent;
         private ulong _ramUsedBytes;
         private ulong _ramTotalBytes;
@@ -38,6 +42,40 @@ namespace System_Monitor.Models
             set { _gpuPercent = value; OnPropertyChanged(nameof(GpuPercent)); }
         }
 
+        /// <summary>
+        /// Load of the primary (preferably discrete) GPU, as reported by a
+        /// device-identified sensor backend. Null when no such sensor is
+        /// readable. This is distinct from <see cref="GpuPercent"/>, which is
+        /// the legacy Windows engine-counter average.
+        /// </summary>
+        public double? GpuLoadPercent
+        {
+            get => _gpuLoadPercent;
+            set { _gpuLoadPercent = value; OnPropertyChanged(nameof(GpuLoadPercent)); }
+        }
+
+        /// <summary>
+        /// Load of the GPU known to be integrated with the CPU, from a
+        /// device-identified sensor backend. Null when no such GPU is known
+        /// or its load is unreadable.
+        /// </summary>
+        public double? IntegratedGpuLoadPercent
+        {
+            get => _integratedGpuLoadPercent;
+            set { _integratedGpuLoadPercent = value; OnPropertyChanged(nameof(IntegratedGpuLoadPercent)); }
+        }
+
+        /// <summary>
+        /// Load of the GPU known to be discrete, from a device-identified
+        /// sensor backend. Null when no such GPU is known or its load is
+        /// unreadable.
+        /// </summary>
+        public double? DiscreteGpuLoadPercent
+        {
+            get => _discreteGpuLoadPercent;
+            set { _discreteGpuLoadPercent = value; OnPropertyChanged(nameof(DiscreteGpuLoadPercent)); }
+        }
+
         public double? NvidiaGpuPercent
         {
             get => _nvidiaGpuPercent;
@@ -54,6 +92,17 @@ namespace System_Monitor.Models
         {
             get => _gpuTemperature;
             set { _gpuTemperature = value; OnPropertyChanged(nameof(GpuTemperature)); }
+        }
+
+        /// <summary>
+        /// Temperature from unidentified ACPI thermal zones, if any sensor
+        /// reports one. Not labeled as CPU or GPU temperature because the
+        /// component identity is unknown.
+        /// </summary>
+        public double? AcpiThermalZoneTemperatureC
+        {
+            get => _acpiThermalZoneTemperatureC;
+            set { _acpiThermalZoneTemperatureC = value; OnPropertyChanged(nameof(AcpiThermalZoneTemperatureC)); }
         }
 
         public double RamPercent

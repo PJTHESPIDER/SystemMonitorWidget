@@ -45,9 +45,21 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
-    <PackageReference Include="System.Management" Version="8.0.0" />
+    <!--
+      Pinned to 10.0.2 because LibreHardwareMonitorLib 0.9.6 requires
+      System.Management >= 10.0.2; NuGet errors on the resulting downgrade.
+      The 10.0.2 package still ships a net8.0 asset, so the target framework
+      is unaffected.
+    -->
+    <PackageReference Include="System.Management" Version="10.0.2" />
     <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="8.0.0" />
     <PackageReference Include="System.Security.Permissions" Version="8.0.0" />
+    <!--
+      Read-only hardware sensor backend. MPL-2.0. Fully managed: the package
+      ships no native binaries or drivers. See docs/refactor-plan.md for the
+      exact version, transitive dependency list and known limitations.
+    -->
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
   </ItemGroup>
 
   <ItemGroup>

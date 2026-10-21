@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <!--
+    The pipeline tests use the FakeTimeProvider from
+    Microsoft.Extensions.TimeProvider.Testing (see the PackageReference below).
+    A hand-rolled local copy used to live here and shadowed the package type
+    in the SystemMonitor.Tests namespace, so the tests were silently running
+    against the local implementation instead of the packaged one.
+  -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
+    <PackageReference Include="xunit" Version="2.9.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <!-- FakeTimeProvider gives the pipeline tests virtual time, so polling
+         intervals are advanced deterministically instead of slept through. -->
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="8.10.0" />
+  </ItemGroup>
+
+  <!-- Link only the pure, hardware-independent logic files so tests do not
+       require WindowsAppSDK or real hardware. The LibreHardwareMonitor
+       adapter itself is deliberately NOT linked: it is the only file that
+       touches the library, and linking it would pull the native-free but
+       still hardware-facing dependency into the test host. The mapping logic
+       it feeds is linked and tested through fixtures. -->
+  <ItemGroup>
+    <Compile Include="../Models/HardwareModels.cs" Link="Models/%(Filename)%(Extension)" />
+    <Compile Include="../Services/ThermalMath.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NetworkDeltaCalculator.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NetworkInterfacePolicy.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/ThermalZoneReading.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/LegacyPayloadPresenter.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/LhmSensorSelection.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/LhmSensorSource.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/LhmSnapshotMapper.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/IMetricsCollector.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/UpdatePipeline.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/WidgetRegistry.cs" Link="Services/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

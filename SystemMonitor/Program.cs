@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System_Monitor.COM;
 using System_Monitor.Services;
 
@@ -29,6 +30,12 @@ namespace System_Monitor
 
             // Wait until all widgets are deactivated/deleted or host disconnects
             SystemMonitorWidgetProvider.WaitForCompletion();
+
+            // Stop the update pipeline and await outstanding work before
+            // disposing owned resources — including the sensor backend — so
+            // the backend is never disposed while the pipeline may still be
+            // using it.
+            SystemMonitorWidgetProvider.ShutdownAsync().GetAwaiter().GetResult();
 
             if (cookie != 0)
             {

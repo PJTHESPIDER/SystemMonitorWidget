@@ -523,7 +523,7 @@ namespace System_Monitor.Services
                     },
                     {
                       "type": "TextBlock",
-                      "text": "Intel: ${igpu} | NVIDIA: ${dgpu}",
+                      "text": "Integrated: ${igpu} | Discrete: ${dgpu}",
                       "size": "Small",
                       "isSubtle": true,
                       "spacing": "None"

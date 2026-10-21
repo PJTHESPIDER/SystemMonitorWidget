@@ -251,20 +251,10 @@ namespace System_Monitor.Services
 
         private double? GetIntelGpuTemperatureBestEffort()
         {
-            try
-            {
-                using var searcher = new ManagementObjectSearcher("root\\WMI", "SELECT * FROM MSAcpi_ThermalZoneTemperature");
-                var collection = searcher.Get();
-                var temps = collection.Cast<ManagementObject>()
-                    .Select(mo => TryGetDouble(mo, "CurrentTemperature"))
-                    .Where(v => v.HasValue)
-                    .Select(v => (v!.Value - 273.2) / 10.0) // WMI reports tenths of Kelvin
-                    .Where(t => t > 0 && t < 200)
-                    .ToList();
-                if (temps.Count > 0)
-                    return temps.Average();
-            }
-            catch { }
+            // ACPI MSAcpi_ThermalZoneTemperature zones are not GPU-specific.
+            // Do not present unidentified sensor readings as GPU temperature.
+            // Return null so only confirmed GPU sensors (e.g. NVIDIA via nvidia-smi)
+            // are reported as GPU temperature.
             return null;
         }
     }
