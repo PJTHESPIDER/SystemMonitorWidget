@@ -1,0 +1,148 @@
+# EditorConfig for SystemMonitor.
+#
+# These rules describe the code as it is written today. They were derived
+# by surveying the existing sources, not by imposing a new style: every
+# rule below matches the code that is already in the repository, so turning
+# this file on does not reformat a single existing file.
+#
+# Anything not stated here is left to the developer's own tools.
+
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Line endings are deliberately not pinned here. .gitattributes normalizes
+# them ("* text=auto") and core.autocrlf is true on this machine, so the
+# working tree already uses CRLF. Pinning end_of_line made some tools
+# want to rewrite files that were already correct, which is exactly the
+# churn this file is meant to avoid.
+
+[*.cs]
+indent_style = space
+indent_size = 4
+tab_width = 4
+
+# Braces are placed on their own line (Allman), and the whole file is
+# wrapped in a block namespace rather than a file-scoped one.
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = true
+csharp_new_line_before_members_in_anonymous_types = true
+csharp_new_line_between_query_expression_clauses = true
+
+# Namespaces are declared with a block, never a file-scoped namespace.
+csharp_style_namespace_declarations = block_scoped:suggestion
+
+# "using" directives go outside the namespace, System first, then
+# everything else alphabetically.
+dotnet_separate_import_directive_groups = false
+dotnet_sort_system_directives_first = true
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+
+# "this." is not used to qualify members.
+dotnet_style_qualification_for_field = false:suggestion
+
+# Braces are always used, even for a single statement.
+csharp_prefer_braces = true:suggestion
+
+# "var" is used where the type is evident from the right-hand side.
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = true:suggestion
+
+# Modern C# idioms are welcome: pattern matching, switch expressions,
+# null-conditional access, and target-typed new.
+csharp_style_pattern_matching_over_is_with_cast = true:suggestion
+csharp_style_pattern_matching_over_as_with_null_check = true:suggestion
+csharp_style_throw_expression = true:suggestion
+csharp_style_null_conditional_operator = true:suggestion
+dotnet_style_object_initializer = true:suggestion
+dotnet_style_collection_initializer = true:suggestion
+dotnet_style_coalesce_expression = true:suggestion
+dotnet_style_null_propagation = true:suggestion
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_expression_bodied_properties = true:suggestion
+csharp_style_expression_bodied_accessors = true:suggestion
+csharp_style_prefer_switch_expression = true:suggestion
+
+# Private fields are _camelCase.
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel_case
+dotnet_naming_rule.private_fields_underscore.severity = suggestion
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_style.underscore_camel_case.required_prefix = _
+dotnet_naming_style.underscore_camel_case.capitalization = camel_case
+
+# Public and protected members are PascalCase; parameters and locals are
+# camelCase.
+dotnet_naming_rule.types_pascal_case.symbols = types
+dotnet_naming_rule.types_pascal_case.style = pascal_case
+dotnet_naming_rule.types_pascal_case.severity = suggestion
+dotnet_naming_symbols.types.applicable_kinds = class,struct,interface,enum,delegate
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+
+dotnet_naming_rule.members_pascal_case.symbols = members
+dotnet_naming_rule.members_pascal_case.style = pascal_case
+dotnet_naming_rule.members_pascal_case.severity = suggestion
+dotnet_naming_symbols.members.applicable_kinds = property,method,event
+dotnet_naming_symbols.members.applicable_accessibilities = public,internal,protected,protected_internal,private_protected
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+
+dotnet_naming_rule.parameters_camel_case.symbols = parameters
+dotnet_naming_rule.parameters_camel_case.style = camel_case
+dotnet_naming_rule.parameters_camel_case.severity = suggestion
+dotnet_naming_symbols.parameters.applicable_kinds = parameter
+dotnet_naming_style.camel_case.capitalization = camel_case
+
+# Interfaces are prefixed with I.
+dotnet_naming_rule.interfaces_prefixed.symbols = interfaces
+dotnet_naming_rule.interfaces_prefixed.style = prefixed_interface
+dotnet_naming_rule.interfaces_prefixed.severity = suggestion
+dotnet_naming_symbols.interfaces.applicable_kinds = interface
+dotnet_naming_style.prefixed_interface.required_prefix = I
+dotnet_naming_style.prefixed_interface.capitalization = pascal_case
+
+# Async methods end with Async.
+dotnet_naming_rule.async_suffix.symbols = async_methods
+dotnet_naming_rule.async_suffix.style = async_suffix
+dotnet_naming_rule.async_suffix.severity = suggestion
+dotnet_naming_symbols.async_methods.applicable_kinds = method
+dotnet_naming_symbols.async_methods.required_modifiers = async
+dotnet_naming_style.async_suffix.required_suffix = Async
+dotnet_naming_style.async_suffix.capitalization = pascal_case
+
+# Unused code is a warning, not a suggestion: an unused private field is
+# usually a leftover from a refactor.
+dotnet_diagnostic.CS0169.severity = warning
+dotnet_diagnostic.CS0414.severity = warning
+dotnet_diagnostic.CS0219.severity = warning
+
+[*.{csproj,props,targets,xml}]
+indent_style = space
+indent_size = 2
+
+[*.{json,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.ps1]
+indent_style = space
+indent_size = 4
+
+[*.{md}]
+indent_style = space
+indent_size = 2
+# Markdown trailing spaces are meaningful (a hard line break).
+trim_trailing_whitespace = false
+
+[*.{bat,cmd}]
+end_of_line = crlf
