@@ -2,7 +2,7 @@
 
 **Status:** Measurement bugs fixed; manufacturer-neutral model and immutable snapshots in place; read-only LibreHardwareMonitor sensor backend integrated; single non-overlapping update pipeline in place; NVIDIA command-line collection retained as a bounded, reconciled fallback; GPU-memory compatibility and labelling in place. Build and tests green. **Validated in the live Windows widget host** (2026-10-21): the card was pinned, rendered and measured in all three sizes, and driven through resize, deactivate/reactivate, remove/re-add and multiple instances. The action row was removed after the host was found never to render it.
 **Baseline build:** `dotnet build SystemMonitor/SystemMonitor.csproj -c Release -r win-x64` — succeeded, 0 warnings, 0 errors.
-**Tests:** `SystemMonitor.Tests` — 405 tests pass (thermal conversion, network delta, interface policy, hardware models, immutable snapshots, legacy presenter, LHM sensor selection/conversion/mapping, update-pipeline lifecycle, NVIDIA command-line fallback, GPU-memory compatibility and labelling, live-host layout fit).
+**Tests:** `SystemMonitor.Tests` — 415 tests pass (thermal conversion, network delta, interface policy, hardware models, immutable snapshots, legacy presenter, LHM sensor selection/conversion/mapping, update-pipeline lifecycle, NVIDIA command-line fallback, GPU-memory compatibility and labelling, live-host layout fit).
 **Last audited against the checkout:** 2026-10-21 (commit `eb2568e`, plus the uncommitted live-host validation work).
 **Working directory:** `E:\Code\SystemMonitor`
 
@@ -294,7 +294,7 @@ state of the code *at the time of the audit* — it is kept verbatim so the find
 - **Network throughput uses actual elapsed time**: `NetworkDeltaCalculator.Calculate` computes `(now - previous.Timestamp).TotalSeconds` instead of a hard-coded 5s interval. First sample establishes a baseline with no rate emitted.
 - **Per-interface baselines by interface ID**: `SystemMetricsService` tracks baselines in a `ConcurrentDictionary<string, InterfaceSample>` keyed by `NetworkInterface.Id`. Disappearing interfaces are dropped from baselines; reappearing/reset interfaces are rebaselined (no spike, no negative rate).
 - **Loopback/virtual adapter policy**: `NetworkInterfacePolicy.ShouldInclude` excludes loopback interfaces and down interfaces, but includes VPN/tunnel and other virtual adapters carrying legitimate traffic.
-- **Consistent clamping**: `ThermalMath.ClampPercent` clamps to [0, 100] and maps NaN/Infinity to `0.0`; used for the CPU, RAM and disk percentages. Note that mapping a non-finite value to zero means a NaN percentage would be reported as a *measured* 0 % — see "Remaining limitations" below.
+- **Consistent clamping**: `ThermalMath.ClampPercent` clamps to [0, 100] and returns *no value* for a non-finite input; used for the CPU percentage. `ThermalMath.PercentOf` computes a ratio of two measured amounts and returns no value when the ratio is undefined (a total of zero) or when either operand is non-finite; used for the RAM and disk percentages. A percentage that could not be computed is reported as unavailable, never as a measured 0 % — see "Remaining limitations" below.
 - **Unused disk throughput counters removed**: `_diskReadBytesPerSec` / `_diskWriteBytesPerSec` (never had `NextValue()` called, no consumers) removed from ctor and `Dispose`.
 
 ---
@@ -875,7 +875,7 @@ the widget continues to work. The NVIDIA GPU and Intel iGPU readings work withou
 
 **Modified files:**
 - `Models/SystemMetrics.cs` — added `AcpiThermalZoneTemperatureC` property (unidentified ACPI sensors, separate from CPU/GPU).
-- `Services/SystemMetricsService.cs` — removed unused `PerformanceCounter` disk counters; ACPI temps converted with corrected formula and written to `AcpiThermalZoneTemperatureC` (not `CpuTemperature`); network now uses per-interface baselines by ID with actual elapsed time; counter reset/wrap produces no negative rate; loopback excluded via `NetworkInterfacePolicy`; clamping consistent via `ThermalMath.ClampPercent`.
+- `Services/SystemMetricsService.cs` — removed unused `PerformanceCounter` disk counters; ACPI temps converted with corrected formula and written to `AcpiThermalZoneTemperatureC` (not `CpuTemperature`); network now uses per-interface baselines by ID with actual elapsed time; counter reset/wrap produces no negative rate; loopback excluded via `NetworkInterfacePolicy`; clamping consistent via `ThermalMath.ClampPercent`. *(The clamping helper's treatment of a non-finite value was corrected later — see "A percentage that could not be computed".)*
 - `Services/SystemMonitorWidgetProvider.cs` — payload now includes `acpiThermalZoneTemp` key.
 - `SystemMonitor.sln` — added `SystemMonitor.Tests` project.
 
@@ -1495,14 +1495,13 @@ figure alone is shown, and when *that* is unavailable the key reads
 These are precise and unresolved. None of them is a demonstrated
 production-path defect.
 
-1. **`ClampPercent` maps a non-finite percentage to `0.0`.** A NaN or
-   infinite value becomes a *measured* zero and is reported as `Available`.
-   Every current call site feeds it a value derived from a finite ratio, so
-   this is latent rather than reachable today — but the rule itself is
-   "zero stands in for a non-measurement", which is the thing the collector
-   state exists to prevent. `UpdateRam` and `UpdateDisk` compute
-   `used / total` and pass the result through it; a `total` of zero would
-   produce exactly this NaN.
+1. ~~**`ClampPercent` maps a non-finite percentage to `0.0`.**~~ **RESOLVED
+   (2026-10-21)** — see "A percentage that could not be computed" below.
+   `ThermalMath.ClampPercent` now returns no value for a non-finite input
+   rather than a measured zero, and the RAM and disk percentages are
+   computed through `ThermalMath.PercentOf`, which reports an undefined
+   ratio (a total of zero) as no value. The remaining limitations in this
+   list are unchanged.
 
 2. **A failed metric keeps its last device id.** `ScalarCollectorState.
    ReportNoValue` sets the no-value flag but does not clear the entry's
@@ -1945,3 +1944,193 @@ the legacy contract's heading.
    knowledge.** "GPU memory" is what the widget can honestly say about a
    "Memory Used" / "Memory Total" pair. It is not a claim that the pool is
    shared, and it is not a claim that it is dedicated.
+
+---
+
+## A percentage that could not be computed (2026-10-21)
+
+A scoped defect-fix pass over the checkout at commit `1bac139`. Every prior
+finding was confirmed against the current source rather than inherited, and
+this entry records the one defect that was fixed.
+
+### Confirmed root cause
+
+`ThermalMath.ClampPercent` mapped a non-finite percentage to `0.0`:
+
+```csharp
+public static double ClampPercent(double value)
+{
+    if (double.IsNaN(value) || double.IsInfinity(value))
+        return 0.0;
+    return Math.Max(0.0, Math.Min(100.0, value));
+}
+```
+
+A NaN or an infinite value became a *measured* zero and was published as
+`Available`. The rule was "zero stands in for a non-measurement" — the
+exact substitution the collector state exists to prevent, and the
+distinction between a measured zero, an unavailable figure, a failed read
+and a stale value that the project is built around.
+
+The helper had three call sites, and each one computed a ratio first:
+
+| Call site | The ratio | When it is undefined |
+|---|---|---|
+| `UpdateCpu` | `(1 - idleDiff / sys) * 100` | `sys == 0` is guarded before the call, so the ratio is finite in practice |
+| `UpdateRam` | `used / ullTotalPhys * 100` | `ullTotalPhys == 0` — a NaN |
+| `UpdateDisk` | `used / drive.TotalSize * 100` | `drive.TotalSize == 0` — a NaN |
+
+So the defect was latent rather than demonstrated: every current path
+feeds the helper a finite ratio. But the helper's *contract* was wrong,
+and the two ratios with an undefined denominator were one API call away
+from producing exactly the NaN the helper silently converted into a
+measured 0 %.
+
+Two tests had pinned the wrong behaviour:
+`ClampPercent_NaN_ReturnsZero`, `ClampPercent_PositiveInfinity_ReturnsZero`
+and `ClampPercent_NegativeInfinity_ReturnsZero` all asserted
+`ClampPercent(NaN) == 0.0`. Those assertions were corrected, not deleted;
+the tests now pin the correct contract.
+
+### The fix
+
+`ThermalMath.ClampPercent` returns `double?` and returns null for a
+non-finite input. A measured zero is still zero — `ClampPercent(0.0)` is
+`0.0` — so the two cases stay distinguishable.
+
+`ThermalMath.PercentOf(used, total)` was added for the two ratio call
+sites. It reports no value when the total is zero, when either operand is
+non-finite, and otherwise returns the clamped ratio.
+
+The three collectors now branch on the result:
+
+- `UpdateCpu` — a non-finite load reports no value instead of a measured
+  0 %.
+- `UpdateRam` — a total of zero reports **no percentage**, while the
+  used and total figures are still published: they are real readings.
+  The percentage alone is unavailable.
+- `UpdateDisk` — the same shape.
+
+An unavailable percentage becomes `Failed` (or `Stale`, if an earlier
+cycle succeeded), so the presenter renders it as "N/A" — never as
+"0.0%". The combined "used / total (percent)" figure falls back to
+"used / total" without a percentage, which is what the presenter's
+`FormatUsage` already does when the percentage is not usable.
+
+### Files
+
+**Modified:**
+- `Services/ThermalMath.cs` — `ClampPercent` returns `double?` and reports
+  a non-finite input as no value; `PercentOf` added for ratio callers.
+- `Services/SystemMetricsService.cs` — `UpdateCpu`, `UpdateRam` and
+  `UpdateDisk` branch on the computed percentage and report no value
+  when it could not be computed.
+- `SystemMonitor.Tests/ThermalMathTests.cs` — the three tests that pinned
+  the defect now pin the correct contract; `PercentOf` is covered for a
+  normal ratio, a measured zero, a zero total, a negative total, a NaN
+  operand and an infinite operand.
+- `SystemMonitor.Tests/WidgetPayloadPresenterTests.cs` — a percentage that
+  was not computed reaches the payload as "N/A" rather than "0.0%", and a
+  measured zero percentage still reaches it as "0.0%".
+- `docs/refactor-plan.md`, `docs/build-and-package.md` — the clamping
+  behaviour, the limitation entry and the test count are updated.
+
+### Tests
+
+`ThermalMathTests` (17 tests) covers the helper contract directly:
+
+| Case | Test |
+|---|---|
+| A measured zero stays zero | `ClampPercent_MeasuredZero_StaysZero` |
+| A non-finite input has no value | `ClampPercent_NaN_HasNoValue`, `ClampPercent_PositiveInfinity_HasNoValue`, `ClampPercent_NegativeInfinity_HasNoValue` |
+| A ratio is computed | `PercentOf_ComputesTheRatio` |
+| A measured zero usage is zero | `PercentOf_MeasuredZeroUsed_IsZero` |
+| An undefined ratio has no value | `PercentOf_ZeroTotal_HasNoValue`, `PercentOf_NegativeTotal_HasNoValue` |
+| A non-finite operand has no value | `PercentOf_NaNUsed_HasNoValue`, `PercentOf_InfiniteTotal_HasNoValue` |
+| A ratio above 100 % is clamped | `PercentOf_AboveOneHundredPercent_ClampsToOneHundred` |
+
+`WidgetPayloadPresenterTests` covers the end of the path:
+
+| Case | Test |
+|---|---|
+| A percentage that was not computed is "N/A", and the combined figure carries no percentage | `APercentageThatWasNotComputed_IsUnavailableRatherThanZero` |
+| A measured zero percentage is "0.0%" | `AMeasuredZeroPercentage_IsPresentedAsZero` |
+
+The suite is **415 tests, all passing**.
+
+### Verification performed
+
+- `dotnet build SystemMonitor.sln -p:Platform=x64 -v q --nologo` —
+  succeeded, 0 warnings, 0 errors.
+- `dotnet test SystemMonitor.Tests/SystemMonitor.Tests.csproj --nologo -v q` —
+  `Passed! - Failed: 0, Passed: 415, Skipped: 0, Total: 415`.
+
+**No live-host or physical-hardware validation was performed for this
+change.** The reasoning above is static analysis plus fixture tests. The
+defect was latent — no current code path produces the NaN — so there was
+no observable behaviour to reproduce on a machine.
+
+### Remaining limitations
+
+1. **The defect was latent, and the fix is not hardware-validated.** The
+   unreachable path was closed by construction and by unit test. Nothing
+   on a real machine has been observed producing an unavailable
+   percentage, and the "N/A" rendering of one has not been seen in the
+   live widget host.
+2. **The mutable `SystemMetrics` model still cannot express the
+   distinction.** `RamPercent` and `DiskPercent` are non-nullable
+   `double`, so the legacy model still reads zero when the percentage is
+   unavailable. It is not on the production path — the payload is built
+   from the immutable snapshot — so no widget is affected. The
+   limitation is inherited from the model, not from this fix.
+3. **The CPU load path is guarded by a separate condition rather than by
+   the helper.** `UpdateCpu` checks `sys > 0` before computing the ratio,
+   so `ClampPercent` there is a backstop rather than the primary guard.
+   The two guards agree, but they are not one check.
+4. **The collectors' new branch is not covered end to end.** The three
+   collectors read the live machine through P/Invoke and `DriveInfo`, so
+   they are not linked into the test project and cannot be exercised by
+   the suite. The branch is therefore covered at the two ends — the
+   helper's contract is tested directly, and the payload's rendering of
+   an unavailable percentage is tested directly — but the code between
+   them (the `if (percent.HasValue)` in `UpdateRam` and `UpdateDisk`) is
+   verified by inspection only. Extracting the ratio-and-report step
+   into a testable helper would close that gap; it was left out because
+   it would widen this change beyond the defect.
+
+### Suggested commit message
+
+```
+Report an uncomputable percentage as unavailable, not as a measured zero
+
+ThermalMath.ClampPercent mapped a non-finite percentage to 0.0 and
+published it as Available. A NaN or an infinite value is not a
+measurement, so the rule was "zero stands in for a non-measurement" —
+the exact substitution the collector state exists to prevent, and the
+distinction between a measured zero, an unavailable figure, a failed
+read and a stale value that the project is built around.
+
+The defect was latent: every current call site feeds the helper a
+finite ratio. But the contract was wrong, and the two ratios with an
+undefined denominator were one API call away from producing exactly
+the NaN the helper silently converted into a measured 0 %.
+
+- ClampPercent now returns double? and reports a non-finite input as
+  no value. A measured zero is still zero, so the two cases stay
+  distinguishable.
+- Add PercentOf(used, total) for the ratio callers. It reports no value
+  for a zero total and for a non-finite operand.
+- UpdateCpu, UpdateRam and UpdateDisk branch on the computed percentage
+  and report no value when it could not be computed. A total of zero
+  still publishes the used and total figures, which are real readings;
+  only the percentage is unavailable.
+- Correct the three tests that pinned the defect, and cover the helper
+  and the payload path for the cases that matter: a measured zero stays
+  zero, an undefined ratio has no value, and the payload shows "N/A"
+  rather than "0.0%".
+
+No live-host or physical-hardware validation was performed: the defect
+was latent, so there was no observable behaviour to reproduce.
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+```

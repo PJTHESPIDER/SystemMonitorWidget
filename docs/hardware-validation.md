@@ -562,6 +562,7 @@ This section lists what the automated suite covers. It is a record of the
 | Legacy presenter | `HardwareModelsTests` | The legacy payload never borrows another device's reading, and never pairs one device's usage with another device's capacity. |
 | Merge precedence | `ScalarMergePolicyTests` | Backend beats fallback beats unattributed counters; the winner keeps its own device id; a measured zero is still a winner. |
 | Measured vs unavailable | `ScalarCollectorStateTests` | A collector that never ran, or whose first read failed, produces no value; a measured zero is presented as a value; a failed read after a success is *stale* and keeps the time it was read. |
+| Percentage arithmetic | `ThermalMathTests`, `WidgetPayloadPresenterTests` | A non-finite percentage is *no value*, never a measured zero; a ratio with a zero total is *no value*; a measured zero percentage stays zero; a percentage that was not computed reaches the payload as "N/A" rather than "0.0%". |
 | Unattributed GPU memory | `GpuMemoryFallbackPolicyTests` | Usage is never summed across adapters; capacity is never taken from the first adapter; a capacity below the usage is discarded. |
 | NVIDIA reconciliation | `NvidiaGpuReconcilerTests`, `NvidiaGpuFallbackSelectorTests` | A reading is attributed only when its PCI key matches exactly one device and one sample; ambiguous and unreconciled readings are dropped. |
 | NVIDIA parsing | `NvidiaSmiParserTests` | Field parsing, malformed rows, unsupported values, implausible ranges. |

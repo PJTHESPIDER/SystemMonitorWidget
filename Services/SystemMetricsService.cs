@@ -424,9 +424,20 @@ namespace System_Monitor.Services
                 {
                     var usage = (1.0 - (double)idleDiff / sys) * 100.0;
                     var clamped = ThermalMath.ClampPercent(usage);
-                    _model.CpuPercent = clamped;
-                    _cpuLoadState.ReportSuccess(
-                        CpuLoadMetric, clamped, "%", CpuLoadSource, DateTimeOffset.UtcNow);
+
+                    if (clamped.HasValue)
+                    {
+                        _model.CpuPercent = clamped.Value;
+                        _cpuLoadState.ReportSuccess(
+                            CpuLoadMetric, clamped.Value, "%", CpuLoadSource, DateTimeOffset.UtcNow);
+                    }
+                    else
+                    {
+                        // The ratio did not produce a finite percentage. There
+                        // is no load figure to report: a zero here would be a
+                        // number that was never measured.
+                        _cpuLoadState.ReportNoValue(CpuLoadMetric, "%", CpuLoadSource);
+                    }
                 }
                 else
                 {
@@ -460,17 +471,28 @@ namespace System_Monitor.Services
                 }
 
                 var used = mem.ullTotalPhys - mem.ullAvailPhys;
-                var percent = (double)used / mem.ullTotalPhys * 100.0;
-                var clamped = ThermalMath.ClampPercent(percent);
+                var percent = ThermalMath.PercentOf(used, mem.ullTotalPhys);
 
                 _model.RamUsedBytes = used;
                 _model.RamTotalBytes = mem.ullTotalPhys;
-                _model.RamPercent = clamped;
 
                 var readAt = DateTimeOffset.UtcNow;
                 _memoryState.ReportSuccess(RamUsedMetric, used, "bytes", RamSource, readAt);
                 _memoryState.ReportSuccess(RamTotalMetric, mem.ullTotalPhys, "bytes", RamSource, readAt);
-                _memoryState.ReportSuccess(RamPercentMetric, clamped, "%", RamSource, readAt);
+
+                if (percent.HasValue)
+                {
+                    _model.RamPercent = percent.Value;
+                    _memoryState.ReportSuccess(RamPercentMetric, percent.Value, "%", RamSource, readAt);
+                }
+                else
+                {
+                    // A total of zero carries no percentage. The used and
+                    // total figures are still real readings, so they are
+                    // kept; the percentage is reported as unavailable
+                    // rather than as a measured zero.
+                    _memoryState.ReportNoValue(RamPercentMetric, "%", RamSource);
+                }
             });
         }
 
@@ -493,17 +515,28 @@ namespace System_Monitor.Services
                 }
 
                 var used = (drive.TotalSize - drive.TotalFreeSpace);
-                var percent = (double)used / drive.TotalSize * 100.0;
-                var clamped = ThermalMath.ClampPercent(percent);
+                var percent = ThermalMath.PercentOf(used, drive.TotalSize);
 
                 _model.DiskUsedBytes = (long)used;
                 _model.DiskTotalBytes = (long)drive.TotalSize;
-                _model.DiskPercent = clamped;
 
                 var readAt = DateTimeOffset.UtcNow;
                 _diskState.ReportSuccess(DiskUsedMetric, used, "bytes", DiskSource, readAt);
                 _diskState.ReportSuccess(DiskTotalMetric, drive.TotalSize, "bytes", DiskSource, readAt);
-                _diskState.ReportSuccess(DiskPercentMetric, clamped, "%", DiskSource, readAt);
+
+                if (percent.HasValue)
+                {
+                    _model.DiskPercent = percent.Value;
+                    _diskState.ReportSuccess(DiskPercentMetric, percent.Value, "%", DiskSource, readAt);
+                }
+                else
+                {
+                    // A total of zero carries no percentage. The used and
+                    // total figures are still real readings, so they are
+                    // kept; the percentage is reported as unavailable
+                    // rather than as a measured zero.
+                    _diskState.ReportNoValue(DiskPercentMetric, "%", DiskSource);
+                }
             });
         }
 

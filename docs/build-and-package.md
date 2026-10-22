@@ -63,7 +63,7 @@ dotnet test SystemMonitor.Tests/SystemMonitor.Tests.csproj
 Result on the current checkout:
 
 ```
-Passed!  - Failed: 0, Passed: 405, Skipped: 0, Total: 405, Duration: 6 s
+Passed!  - Failed: 0, Passed: 415, Skipped: 0, Total: 415, Duration: 6 s
 ```
 
 The suite includes the update-pipeline lifecycle regression tests, which

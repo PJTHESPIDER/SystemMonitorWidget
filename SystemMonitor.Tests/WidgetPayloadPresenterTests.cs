@@ -483,6 +483,53 @@ public class WidgetPayloadPresenterTests
         Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.RamUsedKey));
     }
 
+    [Fact]
+    public void APercentageThatWasNotComputed_IsUnavailableRatherThanZero()
+    {
+        // A capacity of zero produces no percentage: the ratio is
+        // undefined. The collector therefore reports the percentage as
+        // unavailable, and the widget must show it as unavailable too —
+        // not as "0.0%", which is a number the machine never reported.
+        //
+        // The used and total figures are still real readings, so they are
+        // presented; only the percentage is absent.
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            ramUsedBytes: Measurement.AvailableValue(0, "bytes", "GlobalMemoryStatusEx"),
+            ramTotalBytes: Measurement.AvailableValue(0, "bytes", "GlobalMemoryStatusEx"),
+            ramPercent: Measurement.Failed("GlobalMemoryStatusEx"),
+            diskUsedBytes: Measurement.AvailableValue(0, "bytes", "DriveInfo"),
+            diskTotalBytes: Measurement.AvailableValue(0, "bytes", "DriveInfo"),
+            diskPercent: Measurement.Failed("DriveInfo"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot);
+
+        Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.RamPercentKey));
+        Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.DiskPercentKey));
+
+        // The combined figure falls back to the used and total figures
+        // without a percentage, rather than inventing one.
+        Assert.DoesNotContain("%", payload.GetText(WidgetPayloadPresenter.RamKey));
+        Assert.DoesNotContain("%", payload.GetText(WidgetPayloadPresenter.DiskKey));
+    }
+
+    [Fact]
+    public void AMeasuredZeroPercentage_IsPresentedAsZero()
+    {
+        // The other half of the rule, and the one the fix must not break:
+        // a genuinely empty disk reads zero percent, and zero is a
+        // measurement. It must reach the widget as "0.0%".
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            ramUsedBytes: Measurement.AvailableValue(0, "bytes", "GlobalMemoryStatusEx"),
+            ramTotalBytes: Measurement.AvailableValue(2048, "bytes", "GlobalMemoryStatusEx"),
+            ramPercent: Measurement.AvailableValue(0.0, "%", "GlobalMemoryStatusEx"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot);
+
+        Assert.Equal("0.0%", payload.GetText(WidgetPayloadPresenter.RamPercentKey));
+    }
+
     // =====================================================================
     // The ACPI thermal-zone average
     //
