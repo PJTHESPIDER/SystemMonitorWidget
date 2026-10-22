@@ -11,11 +11,18 @@ namespace System_Monitor.Services
     /// <param name="StandardOutput">Everything the process wrote to stdout.</param>
     /// <param name="StandardError">Everything the process wrote to stderr.</param>
     /// <param name="TimedOut">True when the process was killed for exceeding its timeout.</param>
+    /// <param name="ChildTerminated">
+    /// True when a child that was killed is no longer running. False when
+    /// the OS refused to terminate it, in which case the child survives.
+    /// True for every run that did not time out, because the process
+    /// exited on its own.
+    /// </param>
     public readonly record struct ProcessRunResult(
         int ExitCode,
         string StandardOutput,
         string StandardError,
-        bool TimedOut)
+        bool TimedOut,
+        bool ChildTerminated = true)
     {
         /// <summary>
         /// True when the command ran and reported success.

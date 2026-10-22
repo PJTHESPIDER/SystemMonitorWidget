@@ -63,7 +63,7 @@ dotnet test SystemMonitor.Tests/SystemMonitor.Tests.csproj
 Result on the current checkout:
 
 ```
-Passed!  - Failed: 0, Passed: 260, Skipped: 0, Total: 260, Duration: 4 s
+Passed!  - Failed: 0, Passed: 405, Skipped: 0, Total: 405, Duration: 6 s
 ```
 
 The suite includes the update-pipeline lifecycle regression tests, which
@@ -238,6 +238,39 @@ log directory.
 The three `.ps1` files in `build/` are the only tracked files in that
 directory, and they are the only packaging scripts.
 
+## 7a. Driving the live Widgets board
+
+The `build/` directory also holds the helper scripts used to drive the
+real Widgets board for the live-host validation. They are read-only with
+respect to the widget provider: they open the card's own menus, pick a
+size, read the rendered text, and capture images. They do not install,
+remove or re-register anything.
+
+| Script | What it does |
+|---|---|
+| `widget-board-probe.ps1` | Reads the card's rendered text; with `-Size`, changes the size through the host's own "More options" menu and verifies the change against the card's rectangle |
+| `widget-card-measure.ps1` | Measures one card: the geometry of every rendered text run, and a screenshot cropped to the card |
+| `widget-card-shot.ps1` | Captures a screenshot of one card, cropped to its rectangle |
+| `widget-card-add.ps1` | Adds the card from the host's "Add widgets" picker |
+| `widget-card-remove.ps1` | Removes the card through the card's own "More options" → "Remove" |
+| `widget-card-menu.ps1` | Lists what the card's "More options" menu offers |
+| `widget-card-menu-click.ps1` | Clicks one item of that menu by name |
+| `widget-card-deactivate.ps1` | Measures the provider process's CPU rate, which is the observable that distinguishes "still polling" from "stopped" |
+| `widget-provider-list.ps1` | Lists the providers the host's picker shows |
+| `widget-desktop-dump.ps1` | Dumps the UI Automation tree of the widgets windows, for finding elements that live in windows of their own |
+
+The board is opened with `Start-Process "ms-widgetboard:"`.
+
+**Note on the picker.** The host's picker is a window of its own, in a
+process of its own. It is found by searching the whole desktop for its
+title, not by looking inside the board window.
+
+**Note on the menu items.** The host's menu items do not expose an
+invoke pattern, so they are clicked with synthetic mouse input at the
+point UI Automation reports for them. The first click on a popup that
+does not yet own the input focus only takes the focus, which is why
+`widget-card-remove.ps1` retries.
+
 ## Windows-only verification still pending
 
 The following was actually run on the machine this document was written
@@ -260,14 +293,17 @@ on, and passed:
 - the `--export-diagnostics` switch against the installed binary, and the
   opt-in log against a real collection, including the check that the log
   contains none of the account name, the CPU model, the device
-  identifiers or the PCI vendor keys.
+  identifiers or the PCI vendor keys,
+- **the widget rendering and updating on the Widgets board.** The card
+  was pinned from the host's own picker, rendered in all three sizes,
+  resized, deactivated, reactivated, removed, re-added and duplicated on
+  the live board. The rendered text runs were measured with UI
+  Automation and the cards were captured as images. The evidence is in
+  `docs/hardware-validation.md` §2.6 and §2.9.
 
 The following is still pending, because it needs hardware or an
 interactive session that was not available:
 
-- **The widget renders and updates on the Widgets board.** The COM
-  activation was registered correctly, but the board itself was not
-  exercised, so the rendered widget has not been seen.
 - **The x86 and ARM64 packages install.** Both architectures build and
   publish cleanly, their output contains every sensor-backend
   dependency, and their manifests were rewritten to the matching

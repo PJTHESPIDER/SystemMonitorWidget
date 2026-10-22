@@ -7,7 +7,7 @@ namespace SystemMonitor.Tests;
 
 /// <summary>
 /// Tests for the per-widget device selection: the registry's storage of
-/// the selection, and the device-picker actions the templates offer.
+/// the selection, and the templates that carry no action row.
 /// </summary>
 public class WidgetSelectionTests
 {
@@ -120,71 +120,43 @@ public class WidgetSelectionTests
         Assert.Equal("pci-b", entry!.SelectedGpuInstanceId);
     }
 
-    // --- Picker actions --------------------------------------------------
+    // --- The action row is gone ------------------------------------------
 
-    [Fact]
-    public void TheTemplateOffersAnActionPerSelectableDevice()
+    [Theory]
+    [InlineData(WidgetLayoutSize.Small)]
+    [InlineData(WidgetLayoutSize.Medium)]
+    [InlineData(WidgetLayoutSize.Large)]
+    public void TheTemplateCarriesNoActionRow(WidgetLayoutSize size)
     {
-        var choices = new[]
-        {
-            new WidgetPayloadPresenter.GpuChoiceOption("pci-a", "NVIDIA GeForce RTX 3080", true),
-            new WidgetPayloadPresenter.GpuChoiceOption("pci-b", "AMD Radeon RX 6700 XT", false),
-        };
-
-        var template = WidgetTemplates.BuildTemplate(WidgetLayoutSize.Medium, choices);
+        // The host renders a root-level "actions" array as a row of buttons
+        // after the card body. The board does not scroll, so that row
+        // competes with the figures for the card's height and the overflow
+        // is clipped — which is what pushed the action buttons off the
+        // bottom of every size in the live host.
+        //
+        // The templates therefore carry no action row at all.
+        var template = WidgetTemplates.BuildTemplate(size);
 
         using var document = System.Text.Json.JsonDocument.Parse(template);
 
-        var verbs = document.RootElement.GetProperty("actions")
-            .EnumerateArray()
-            .Select(a => a.GetProperty("verb").GetString())
-            .ToList();
-
-        Assert.Contains(WidgetTemplates.RefreshVerb, verbs);
-        Assert.Contains(WidgetTemplates.SelectGpuVerbPrefix + "pci-a", verbs);
-        Assert.Contains(WidgetTemplates.SelectGpuVerbPrefix + "pci-b", verbs);
+        Assert.False(
+            document.RootElement.TryGetProperty("actions", out _),
+            $"The {size} template still carries an actions array.");
     }
 
-    [Fact]
-    public void ADeviceWithNoInstanceIdentityIsNotOfferedAsAChoice()
+    [Theory]
+    [InlineData(WidgetLayoutSize.Small)]
+    [InlineData(WidgetLayoutSize.Medium)]
+    [InlineData(WidgetLayoutSize.Large)]
+    public void TheTemplateIsValidJsonWithoutTheActionRow(WidgetLayoutSize size)
     {
-        // A selection has to be resolvable after a restart, so a device
-        // without a per-instance identity is described but not selectable.
-        var choices = new[]
-        {
-            new WidgetPayloadPresenter.GpuChoiceOption(null, "Unknown GPU", false),
-        };
-
-        var template = WidgetTemplates.BuildTemplate(WidgetLayoutSize.Medium, choices);
+        var template = WidgetTemplates.BuildTemplate(size);
 
         using var document = System.Text.Json.JsonDocument.Parse(template);
 
-        var verbs = document.RootElement.GetProperty("actions")
-            .EnumerateArray()
-            .Select(a => a.GetProperty("verb").GetString())
-            .ToList();
-
-        Assert.Single(verbs);
-        Assert.Equal(WidgetTemplates.RefreshVerb, verbs[0]);
-    }
-
-    [Fact]
-    public void TheChoiceTitleNamesTheDevice()
-    {
-        var choices = new[]
-        {
-            new WidgetPayloadPresenter.GpuChoiceOption("pci-a", "NVIDIA GeForce RTX 3080 (discrete)", false),
-        };
-
-        var template = WidgetTemplates.BuildTemplate(WidgetLayoutSize.Medium, choices);
-
-        using var document = System.Text.Json.JsonDocument.Parse(template);
-
-        var titles = document.RootElement.GetProperty("actions")
-            .EnumerateArray()
-            .Select(a => a.GetProperty("title").GetString())
-            .ToList();
-
-        Assert.Contains("NVIDIA GeForce RTX 3080 (discrete)", titles);
+        Assert.Equal("AdaptiveCard", document.RootElement.GetProperty("type").GetString());
+        Assert.Equal(
+            System.Text.Json.JsonValueKind.Array,
+            document.RootElement.GetProperty("body").ValueKind);
     }
 }

@@ -361,3 +361,53 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# ---------------------------------------------------------------------------
+# SystemMonitor: generated build output, packages and private keys.
+#
+# Everything below is produced by `build/Create-TestMsix.ps1` and can be
+# regenerated from a clean checkout. Tracking it made the repository
+# enormous (a 66 MB .msix and two byte-identical copies of the whole
+# published output tree) and made every build show hundreds of binary
+# changes in the diff.
+# ---------------------------------------------------------------------------
+
+# The packaging script's intermediate and output directories.
+build/package-root/
+build/publish-temp/
+build/msix-output/
+
+# Packaged output. A .msix is a build artifact, not source.
+*.msix
+*.appx
+*.appxbundle
+*.msixbundle
+
+# Signing material. Never commit a private key: a committed key is a
+# published key, and the certificate it belongs to can be used to sign
+# anything that claims to be this package.
+*.pfx
+*.p12
+*.snk
+
+# Signing and publishing credentials.
+*.publishsettings
+*.snk
+
+# Local install logs.
+build/*.log
+*.log
+
+# Per-user publish profiles, which record the author's local paths.
+*.pubxml.user
+
+# The publish profiles themselves are project configuration, not local
+# state: they name the architecture each build publishes for. The shared
+# VisualStudio ignore above hides every *.pubxml, so they are un-ignored
+# here and re-included explicitly. The *.user sidecar stays ignored.
+!SystemMonitor/Properties/PublishProfiles/*.pubxml
+
+# The runtime diagnostic log and the opt-in hardware inventory. Both are
+# written on the user's own machine and describe that machine.
+systemmonitor.log
+systemmonitor-inventory.txt

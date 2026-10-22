@@ -159,33 +159,42 @@ public class NvidiaGpuFallbackPolicyTests
     [Fact]
     public void IsNotInvokedWhenTheBackendSuppliedEveryMetric()
     {
-        // The backend read the temperature and both VRAM figures, so the
-        // fallback has nothing to contribute and no subprocess is started.
-        Assert.False(NvidiaGpuFallbackPolicy.ShouldInvoke(55d, 100UL, 200UL));
+        // The backend read the load, the temperature and both VRAM figures,
+        // so the fallback has nothing to contribute and no subprocess is
+        // started.
+        Assert.False(NvidiaGpuFallbackPolicy.ShouldInvoke(55d, 100UL, 200UL, 30d));
     }
 
     [Fact]
     public void IsInvokedWhenTheBackendCouldNotReadTheTemperature()
     {
-        Assert.True(NvidiaGpuFallbackPolicy.ShouldInvoke(null, 100UL, 200UL));
+        Assert.True(NvidiaGpuFallbackPolicy.ShouldInvoke(null, 100UL, 200UL, 30d));
     }
 
     [Fact]
     public void IsInvokedWhenTheBackendCouldNotReadTheVramUsed()
     {
-        Assert.True(NvidiaGpuFallbackPolicy.ShouldInvoke(55d, null, 200UL));
+        Assert.True(NvidiaGpuFallbackPolicy.ShouldInvoke(55d, null, 200UL, 30d));
     }
 
     [Fact]
     public void IsInvokedWhenTheBackendCouldNotReadTheVramTotal()
     {
-        Assert.True(NvidiaGpuFallbackPolicy.ShouldInvoke(55d, 100UL, null));
+        Assert.True(NvidiaGpuFallbackPolicy.ShouldInvoke(55d, 100UL, null, 30d));
+    }
+
+    [Fact]
+    public void IsInvokedWhenTheBackendCouldNotReadTheLoad()
+    {
+        // The backend can read every metric except the utilization, and the
+        // fallback can supply that one. So the fallback must run.
+        Assert.True(NvidiaGpuFallbackPolicy.ShouldInvoke(55d, 100UL, 200UL, null));
     }
 
     [Fact]
     public void IsInvokedWhenTheBackendReadNothingAtAll()
     {
-        Assert.True(NvidiaGpuFallbackPolicy.ShouldInvoke(null, null, null));
+        Assert.True(NvidiaGpuFallbackPolicy.ShouldInvoke(null, null, null, null));
     }
 }
 

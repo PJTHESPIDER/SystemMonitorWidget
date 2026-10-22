@@ -7,12 +7,20 @@ namespace System_Monitor.Services
 {
     /// <summary>
     /// Compatibility presenter that adapts an immutable <see cref="MetricsSnapshot"/>
-    /// into the legacy flat payload contract consumed by <see cref="WidgetTemplates"/>.
+    /// into the legacy flat payload contract.
     ///
-    /// This keeps existing Adaptive Card templates working during the migration
-    /// to manufacturer-neutral hardware models. Legacy keys that are ambiguous
-    /// (e.g. a single "gpu" key when multiple GPUs exist) are still populated
-    /// but marked with comments so they can be removed in a later phase.
+    /// <para>
+    /// The widget is no longer served by this presenter: it is served by
+    /// <see cref="WidgetPayloadPresenter"/>, which is manufacturer-neutral
+    /// and names the devices it presents. This presenter remains so the
+    /// tests that pin the legacy contract keep testing something.
+    /// </para>
+    ///
+    /// <para>
+    /// The legacy <c>igpu</c>/<c>dgpu</c> keys have been removed: they
+    /// bucketed GPUs by integration class, which collapsed two different
+    /// cards into one value and could name neither of them.
+    /// </para>
     /// </summary>
     public static class LegacyPayloadPresenter
     {
@@ -43,20 +51,32 @@ namespace System_Monitor.Services
             var gpuTemp = BestGpuReading(snapshot, "TemperatureC");
             var gpuVram = BestGpuReading(snapshot, "VramUsedBytes");
             var gpuVramTotal = BestGpuReading(snapshot, "VramTotalBytes");
+            var primaryGpu = LhmSnapshotMapper.SelectPrimaryGpu(snapshot.Gpus);
 
             payload["gpu"] = FormatPercent(gpuLoad);
             payload["gpuTemp"] = FormatTemperature(gpuTemp);
-            payload["gpuVram"] = FormatVram(gpuVram, gpuVramTotal);
+
+            // The memory figure and the heading it sits under come from
+            // the same resolver the production presenter uses, so the
+            // legacy contract cannot drift from it. The legacy presenter
+            // reads both figures from the presented device's own
+            // readings, so the device check is satisfied by construction.
+            var gpuMemory = GpuMemoryPresentation.Resolve(
+                gpuVram,
+                primaryGpu?.DeviceId,
+                gpuVramTotal,
+                primaryGpu?.DeviceId,
+                primaryGpu?.DeviceId);
+
+            payload["gpuVram"] = gpuMemory.Display;
+            payload["gpuVramLabel"] = GpuMemoryPresentation.LabelText(gpuMemory.Label);
             payload["gpuVramUsed"] = FormatBytesValue(gpuVram);
 
-            // Legacy igpu/dgpu keys: populated when a matching-classification GPU
-            // is found, otherwise "N/A". These do not encode the vendor (no
-            // IntelGpuPercent/NvidiaGpuPercent) — they encode integration class,
-            // which is only set when reliably known.
-            var integratedGpu = snapshot.Gpus.FirstOrDefault(g => g.GpuIntegration == GpuIntegration.Integrated);
-            var discreteGpu = snapshot.Gpus.FirstOrDefault(g => g.GpuIntegration == GpuIntegration.Discrete);
-            payload["igpu"] = FormatPercent(MeasurementOf(Reading(snapshot, integratedGpu?.DeviceId, "LoadPercent")));
-            payload["dgpu"] = FormatPercent(MeasurementOf(Reading(snapshot, discreteGpu?.DeviceId, "LoadPercent")));
+            // The legacy igpu/dgpu keys are gone. They bucketed GPUs by
+            // integration class, which collapsed two different cards into
+            // one value and could not name either of them. The
+            // manufacturer-neutral payload presents the selected device and,
+            // where the layout has room, the other devices individually.
 
             // --- RAM ---
             payload["ram"] = FormatUsage(snapshot.RamUsedBytes, snapshot.RamTotalBytes, snapshot.RamPercent);
@@ -82,11 +102,10 @@ namespace System_Monitor.Services
             payload["lastUpdated"] = snapshot.Timestamp.ToString("h:mm:ss tt");
 
             // --- ACPI thermal zone (unidentified, separate from CPU/GPU) ---
-            var acpiTemp = snapshot.Readings
-                .Where(r => r.Metric == "AcpiThermalZoneTemperatureC")
-                .Select(r => r.Measurement)
-                .FirstOrDefault(m => m?.Status == MeasurementStatus.Available);
-            payload["acpiThermalZoneTemp"] = FormatTemperature(acpiTemp);
+            // The reading is a scalar measurement, not a device reading:
+            // the ACPI zone names no component. It is read from the
+            // snapshot's field so the status travels with it.
+            payload["acpiThermalZoneTemp"] = FormatTemperature(snapshot.AcpiThermalZoneTemperatureC);
 
             return payload;
         }
@@ -116,93 +135,75 @@ namespace System_Monitor.Services
                 }
             }
 
-            // Fall back to the first GPU with an available reading. Do not
-            // average across vendors or device classes — that would manufacture
-            // a value that no single device reports.
-            foreach (var gpu in snapshot.Gpus)
-            {
-                var r = Reading(snapshot, gpu.DeviceId, metric);
-                if (r?.Measurement.Status == MeasurementStatus.Available && r.Measurement.Value.HasValue)
-                    return r.Measurement;
-            }
+            // The presented device has no reading for this metric. Another
+            // device's reading is not used in its place: all four legacy GPU
+            // keys describe one device, and borrowing a figure from a
+            // different card would report it under this one's name — and
+            // pairing one card's usage with another card's capacity would
+            // produce a percentage no device reports.
             return null;
         }
 
         private static string FormatPercent(Measurement? m) =>
             m?.Status == MeasurementStatus.Available && m.Value.HasValue
-                ? $"{m.Value.Value:F1}%"
+                ? ByteFormatter.FormatPercent(m.Value.Value)
                 : "N/A";
 
         private static string FormatTemperature(Measurement? m) =>
             m?.Status == MeasurementStatus.Available && m.Value.HasValue
-                ? $"{m.Value.Value:F1}°C"
+                ? ByteFormatter.FormatTemperature(m.Value.Value)
                 : "N/A";
 
         private static string FormatClock(Measurement? m) =>
             m?.Status == MeasurementStatus.Available && m.Value.HasValue
-                ? FormatClockMhz(m.Value.Value)
+                ? ByteFormatter.FormatClock(m.Value.Value)
                 : "N/A";
-
-        private static string FormatClockMhz(double mhz) =>
-            mhz >= 1000 ? $"{mhz / 1000.0:F2} GHz" : $"{mhz:F0} MHz";
 
         private static string FormatBytesValue(Measurement? m) =>
             m?.Status == MeasurementStatus.Available && m.Value.HasValue
-                ? FormatBytes(m.Value.Value)
+                ? ByteFormatter.FormatBytes(m.Value.Value)
                 : "N/A";
 
-        private static string FormatBytes(double bytes)
-        {
-            if (bytes < 0) bytes = 0;
-            if (bytes >= 1024.0 * 1024 * 1024 * 1024)
-                return $"{bytes / (1024.0 * 1024 * 1024 * 1024):F1} TB";
-            if (bytes >= 1024.0 * 1024 * 1024)
-                return $"{bytes / (1024.0 * 1024 * 1024):F1} GB";
-            if (bytes >= 1024.0 * 1024)
-                return $"{bytes / (1024.0 * 1024):F1} MB";
-            if (bytes >= 1024.0)
-                return $"{bytes / 1024.0:F1} KB";
-            return $"{bytes:F0} B";
-        }
-
-        private static string FormatVram(Measurement? used, Measurement? total)
-        {
-            if (used?.Status != MeasurementStatus.Available || !used.Value.HasValue)
-                return "N/A";
-            if (total?.Status == MeasurementStatus.Available && total.Value is { } t && t > 0)
-            {
-                var pct = used.Value.Value / t * 100.0;
-                return $"{FormatBytes(used.Value.Value)} / {FormatBytes(t)} ({pct:F1}%)";
-            }
-            return FormatBytes(used.Value.Value);
-        }
-
+        /// <summary>
+        /// Formats a used/total/percent triple, falling back to the used
+        /// amount when the percentage is not available.
+        ///
+        /// <para>
+        /// The three figures are system-level, so there is no device to
+        /// attribute them to. What still has to hold is that they describe
+        /// one coherent measurement: a capacity of zero cannot carry a
+        /// percentage, a usage above the capacity proves the figures come
+        /// from different readings, and a figure that is unavailable must
+        /// not be shown beside a percentage computed without it.
+        /// </para>
+        /// </summary>
         private static string FormatUsage(Measurement? used, Measurement? total, Measurement? percent)
         {
-            if (percent?.Status == MeasurementStatus.Available && percent.Value.HasValue)
-            {
-                var usedStr = FormatBytesValue(used);
-                var totalStr = FormatBytesValue(total);
-                return $"{usedStr} / {totalStr} ({percent.Value:F1}%)";
-            }
-            return FormatBytesValue(used);
+            if (used?.Status != MeasurementStatus.Available || !used.Value.HasValue)
+                return FormatBytesValue(used);
+
+            var usedValue = used.Value.Value;
+
+            if (total?.Status != MeasurementStatus.Available || !total.Value.HasValue)
+                return FormatBytesValue(used);
+
+            var totalValue = total.Value.Value;
+
+            if (totalValue <= 0 || usedValue > totalValue)
+                return FormatBytesValue(used);
+
+            var usedStr = ByteFormatter.FormatBytes(usedValue);
+            var totalStr = ByteFormatter.FormatBytes(totalValue);
+
+            if (percent?.Status != MeasurementStatus.Available || !percent.Value.HasValue)
+                return $"{usedStr} / {totalStr}";
+
+            return $"{usedStr} / {totalStr} ({percent.Value.Value:F1}%)";
         }
 
         private static string FormatNetworkSpeed(Measurement? m) =>
             m?.Status == MeasurementStatus.Available && m.Value.HasValue
-                ? FormatNetworkSpeed(m.Value.Value)
+                ? ByteFormatter.FormatNetworkSpeed(m.Value.Value)
                 : "N/A";
-
-        private static string FormatNetworkSpeed(double bytesPerSec)
-        {
-            if (bytesPerSec < 0) bytesPerSec = 0;
-            if (bytesPerSec >= 1024.0 * 1024 * 1024)
-                return $"{bytesPerSec / (1024.0 * 1024.0 * 1024.0):F1} GB/s";
-            if (bytesPerSec >= 1024.0 * 1024)
-                return $"{bytesPerSec / (1024.0 * 1024.0):F1} MB/s";
-            if (bytesPerSec >= 1024.0)
-                return $"{bytesPerSec / 1024.0:F1} KB/s";
-            return $"{bytesPerSec:F0} B/s";
-        }
     }
 }

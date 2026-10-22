@@ -21,14 +21,17 @@ namespace System_Monitor.Services
         /// <param name="backendGpuTemperature">The backend's GPU temperature, if it read one.</param>
         /// <param name="backendGpuVramUsedBytes">The backend's VRAM used figure, if it read one.</param>
         /// <param name="backendGpuVramTotalBytes">The backend's VRAM total figure, if it read one.</param>
+        /// <param name="backendGpuLoad">The backend's GPU load, if it read one.</param>
         public static bool ShouldInvoke(
             double? backendGpuTemperature,
             ulong? backendGpuVramUsedBytes,
-            ulong? backendGpuVramTotalBytes)
+            ulong? backendGpuVramTotalBytes,
+            double? backendGpuLoad = null)
         {
             return !backendGpuTemperature.HasValue
                 || !backendGpuVramUsedBytes.HasValue
-                || !backendGpuVramTotalBytes.HasValue;
+                || !backendGpuVramTotalBytes.HasValue
+                || !backendGpuLoad.HasValue;
         }
     }
 }

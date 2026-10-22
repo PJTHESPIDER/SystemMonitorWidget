@@ -1,8 +1,7 @@
 using System;
-using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Windows.Widgets;
@@ -13,7 +12,7 @@ namespace System_Monitor.Services
 {
     [ComVisible(true)]
     [Guid("f72c45b3-9fa6-4155-82de-ab4ccf67cdb8")]
-    public class SystemMonitorWidgetProvider : IWidgetProvider, IDisposable
+    public class SystemMonitorWidgetProvider : IWidgetProvider, IWidgetProvider2, IDisposable
     {
         public static readonly Guid Clsid = Guid.Parse("f72c45b3-9fa6-4155-82de-ab4ccf67cdb8");
 
@@ -30,6 +29,19 @@ namespace System_Monitor.Services
 
         private static readonly ManualResetEvent EmptyWidgetListEvent = new(false);
 
+        /// <summary>
+        /// How long the process waits, with no widget registered, before it
+        /// treats the host as finished.
+        ///
+        /// <para>
+        /// The window gives the host time to pin a widget after the
+        /// provider starts. A widget pinned inside the window keeps the
+        /// process alive; only a window that elapses with the list still
+        /// empty ends the wait.
+        /// </para>
+        /// </summary>
+        private static readonly TimeSpan InactivityWindow = TimeSpan.FromSeconds(30);
+
         private readonly SystemMetrics _metrics;
         private static readonly TimeSpan UpdateInterval = TimeSpan.FromSeconds(5);
 
@@ -37,10 +49,12 @@ namespace System_Monitor.Services
         private static UpdatePipeline<WidgetSize>? _pipeline;
         private static readonly object _pipelineLock = new();
 
-        // Timestamp of the most recent completed collection. Used for
-        // lastUpdated in immediate (non-pipeline) widget updates, and as the
-        // sample timestamp for the payload.
-        private DateTimeOffset _lastSnapshotTimestamp;
+        /// <summary>
+        /// The most recent completed collection, kept so an immediate
+        /// (non-pipeline) widget update has a real snapshot to present
+        /// rather than an empty one.
+        /// </summary>
+        private static MetricsSnapshot? _lastSnapshot;
 
         public SystemMonitorWidgetProvider()
         {
@@ -59,7 +73,11 @@ namespace System_Monitor.Services
                             WidgetId = context.Id,
                             WidgetName = context.DefinitionId,
                             Size = context.Size,
-                            IsActive = context.IsActive
+                            IsActive = context.IsActive,
+                            // The host persists the selection for us, so a
+                            // widget that was pinned before the provider
+                            // restarted keeps its chosen device.
+                            SelectedGpuInstanceId = ReadPersistedSelection(widgetInfo.CustomState),
                         });
                     }
 
@@ -73,22 +91,67 @@ namespace System_Monitor.Services
                     EmptyWidgetListEvent.Set();
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // In non-packaged or test environments, WidgetManager may not be available
+                // In non-packaged or test environments, WidgetManager may not
+                // be available. The widget still starts; it simply has no
+                // pinned widgets to serve.
+                DiagnosticLog.Shared.Warning(
+                    "widget-host",
+                    "enumerate-widgets",
+                    "unavailable",
+                    detail: DiagnosticDetail.Describe(ex));
             }
         }
 
+        /// <summary>
+        /// Waits until the widget host is finished with this process.
+        ///
+        /// <para>
+        /// The wait ends when the widget list is empty and stays empty for
+        /// the inactivity window. A widget pinned during the window
+        /// restarts it, so a live widget is never torn down: the previous
+        /// implementation returned on the timeout regardless, which stopped
+        /// the pipeline for a widget the host had just pinned.
+        /// </para>
+        ///
+        /// <para>
+        /// While widgets are registered, the wait continues for as long as
+        /// they exist. The unbounded wait in that branch is the plan's open
+        /// item #15; it is left as it is, because bounding it properly
+        /// means driving the process exit off the pipeline's drain
+        /// boundary, which is a larger change than this task allows.
+        /// </para>
+        /// </summary>
         public static void WaitForCompletion()
         {
-            if (RunningWidgets.IsEmpty)
+            while (true)
             {
-                // Wait briefly or until widgets are pinned
-                EmptyWidgetListEvent.WaitOne(TimeSpan.FromSeconds(30));
-            }
-            else
-            {
-                EmptyWidgetListEvent.WaitOne();
+                if (!RunningWidgets.IsEmpty)
+                {
+                    // Widgets are registered. Wait for the last one to be
+                    // deleted.
+                    EmptyWidgetListEvent.WaitOne(InactivityWindow);
+                    continue;
+                }
+
+                // The list is empty. Wait for the host either to disappear
+                // or to pin a widget.
+                if (EmptyWidgetListEvent.WaitOne(InactivityWindow))
+                {
+                    // The list went empty and was signalled: the host is
+                    // finished.
+                    return;
+                }
+
+                // The window elapsed with the list still empty. The host
+                // may have pinned a widget during the window, in which
+                // case the wait continues for that widget rather than
+                // tearing down a live pipeline.
+                if (!RunningWidgets.IsEmpty)
+                    continue;
+
+                return;
             }
         }
 
@@ -117,8 +180,8 @@ namespace System_Monitor.Services
             RunningWidgets.Remove(widgetId);
 
             // Same non-blocking pause as Deactivate(): the inactive
-            // transition happens synchronously, the coordinator unwinds in
-            // the background.
+            // transition happens synchronously, the coordinator unwinds in the
+            // background.
             if (!RunningWidgets.HasActiveWidgets)
             {
                 StopPipeline();
@@ -176,15 +239,36 @@ namespace System_Monitor.Services
             }
         }
 
+        /// <summary>
+        /// The widget host asks for the widget's customization experience.
+        ///
+        /// <para>
+        /// This provider does not use a separate customization card: the
+        /// device picker is a set of ordinary actions on the widget itself,
+        /// so there is no separate customization payload to serve. The
+        /// callback is implemented because the interface requires it, and
+        /// because the host may ask for the settings payload at any time —
+        /// the regular template already carries the picker, so the
+        /// customization request is answered by republishing the widget.
+        /// </para>
+        /// </summary>
+        public void OnCustomizationRequested(WidgetCustomizationRequestedArgs customizationRequestedArgs)
+        {
+            var widgetId = customizationRequestedArgs.WidgetContext.Id;
+
+            if (RunningWidgets.TryGet(widgetId, out var entry) && entry is not null)
+                UpdateWidget(entry);
+        }
+
         public void OnActionInvoked(WidgetActionInvokedArgs actionInvokedArgs)
         {
-            var verb = actionInvokedArgs.Verb;
-            if (string.Equals(verb, "refresh", StringComparison.OrdinalIgnoreCase))
-            {
-                // Coalesce: multiple refreshes during a collection collapse
-                // into a single re-collection after the current one finishes.
-                _pipeline?.ScheduleRefresh();
-            }
+            // The templates carry no root-level actions, so the host has
+            // nothing to invoke. The callback is implemented because the
+            // interface requires it.
+            //
+            // The widget refreshes on its own interval, and the device
+            // picker that used to live here was removed with the action
+            // row: it cost the card the height its figures needed.
         }
 
         public void OnWidgetContextChanged(WidgetContextChangedArgs contextChangedArgs)
@@ -204,13 +288,20 @@ namespace System_Monitor.Services
 
         private void EnsurePipelineStarted()
         {
-            if (_metricsService == null)
-            {
-                _metricsService = new SystemMetricsService(_metrics);
-            }
-
             lock (_pipelineLock)
             {
+                // The collector is created under the same lock as the
+                // pipeline, and the pipeline is built over the collector
+                // that is actually in the field. Constructing the collector
+                // outside the lock would let two callers race: the second
+                // would overwrite the field, and the pipeline would be built
+                // over a service that is no longer the one the field holds —
+                // so the service the pipeline uses would never be disposed.
+                if (_metricsService == null)
+                {
+                    _metricsService = new SystemMetricsService(_metrics);
+                }
+
                 if (_pipeline == null)
                 {
                     _pipeline = new UpdatePipeline<WidgetSize>(
@@ -267,13 +358,19 @@ namespace System_Monitor.Services
         }
 
         /// <summary>
-        /// Pipeline callback: builds one payload from the completed snapshot
-        /// and records the sample timestamp for <see cref="lastUpdated"/>.
+        /// Pipeline callback: builds one payload from the completed snapshot.
+        ///
+        /// <para>
+        /// The payload is built per widget, because the presented GPU is a
+        /// per-widget setting: two widgets on the same machine may show
+        /// different cards. The snapshot is the same for both, so the
+        /// collection work is not repeated.
+        /// </para>
         /// </summary>
         private string BuildPayloadFromSnapshot(MetricsSnapshot snapshot)
         {
-            _lastSnapshotTimestamp = snapshot.Timestamp;
-            return CreateDataPayload(snapshot);
+            _lastSnapshot = snapshot;
+            return string.Empty;
         }
 
         /// <summary>
@@ -283,251 +380,115 @@ namespace System_Monitor.Services
         /// </summary>
         private Task PublishToWidget(string payload, WidgetEntry<WidgetSize> widget)
         {
-            UpdateWidget(widget, payload);
+            UpdateWidget(widget);
             return Task.CompletedTask;
         }
 
-        private void UpdateWidget(WidgetEntry<WidgetSize> widget, string? payload = null)
+        private void UpdateWidget(WidgetEntry<WidgetSize> widget)
         {
+            var started = Stopwatch.StartNew();
+
             try
             {
-                var template = WidgetTemplates.GetTemplateForSize(widget.Size);
-                var data = payload ?? CreateDataPayloadFromCurrentMetrics();
+                var snapshot = _lastSnapshot;
+                var selectionId = widget.SelectedGpuInstanceId;
+
+                var template = WidgetTemplates.BuildTemplate(ToLayoutSize(widget.Size));
+
+                var data = WidgetPayloadPresenter
+                    .Present(snapshot, selectionId)
+                    .ToJson();
 
                 var updateOptions = new WidgetUpdateRequestOptions(widget.WidgetId)
                 {
                     Template = template,
-                    Data = data
+                    Data = data,
+                    // The host persists this per widget and hands it back on
+                    // the next run, so the user's choice survives a restart
+                    // of the provider.
+                    CustomState = selectionId ?? string.Empty,
                 };
 
                 WidgetManager.GetDefault().UpdateWidget(updateOptions);
+
+                DiagnosticLog.Shared.Debug(
+                    "widget-host",
+                    "update",
+                    "ok",
+                    elapsed: started.Elapsed,
+                    detail: $"size={widget.Size}");
             }
-            catch
+            catch (Exception ex)
             {
-                // Widget manager update error (e.g., host disconnected)
+                // The host may have disconnected, or the update may have
+                // been rejected. The next cycle tries again, so this is
+                // reported once rather than for every widget on every
+                // cycle.
+                DiagnosticLog.Shared.Warning(
+                    "widget-host",
+                    "update",
+                    "failed",
+                    elapsed: started.Elapsed,
+                    detail: DiagnosticDetail.Describe(ex));
             }
         }
 
         /// <summary>
-        /// Builds the complete payload from a completed immutable snapshot.
-        /// <see cref="lastUpdated"/> uses the sample timestamp from the
-        /// snapshot, not the serialization time.
+        /// Maps the host's widget size onto the project's layout size.
         /// </summary>
-        private string CreateDataPayload(MetricsSnapshot snapshot)
+        private static WidgetLayoutSize ToLayoutSize(WidgetSize size) => size switch
         {
-            // Prefer the device-identified GPU load (a real sensor on a known
-            // GPU) over the legacy Windows engine-counter average, which can
-            // report a value while naming no device.
-            double? primaryGpuLoad = snapshot.GpuLoadPercent?.Value ?? _metrics.GpuPercent;
-
-            string gpu = primaryGpuLoad.HasValue
-                ? $"{primaryGpuLoad.Value:F1}%"
-                : "N/A";
-
-            string cpuTempStr = FormatMeasurement(snapshot.CpuTemperatureC, "F1", "°C");
-            string gpuTempStr = FormatMeasurement(snapshot.GpuTemperatureC, "F1", "°C");
-
-            // ACPI thermal-zone sensors are not component-identified; expose
-            // separately so they are never mistaken for confirmed CPU/GPU temps.
-            string acpiThermalZoneTempStr = FormatMeasurement(snapshot.AcpiThermalZoneTemperatureC, "F1", "°C");
-
-            string tempSummary;
-            if (snapshot.CpuTemperatureC?.Status == MeasurementStatus.Available
-                && snapshot.GpuTemperatureC?.Status == MeasurementStatus.Available)
-                tempSummary = $"{cpuTempStr} | {gpuTempStr}";
-            else if (snapshot.CpuTemperatureC?.Status == MeasurementStatus.Available)
-                tempSummary = cpuTempStr;
-            else if (snapshot.GpuTemperatureC?.Status == MeasurementStatus.Available)
-                tempSummary = gpuTempStr;
-            else
-                tempSummary = "N/A";
-
-            string gpuVramUsed = FormatBytesMeasurement(snapshot.GpuVramUsedBytes);
-            string ramUsed = ByteFormatter.FormatBytes(MeasurementValue(snapshot.RamUsedBytes));
-            string ramTotal = ByteFormatter.FormatBytes(MeasurementValue(snapshot.RamTotalBytes));
-            string ramCombined = $"{ramUsed} / {ramTotal}";
-
-            string diskUsed = ByteFormatter.FormatBytes(Math.Max(0, MeasurementValue(snapshot.DiskUsedBytes)));
-            string diskTotal = ByteFormatter.FormatBytes(Math.Max(0, MeasurementValue(snapshot.DiskTotalBytes)));
-            string diskCombined = $"{diskUsed} / {diskTotal}";
-
-            string cpuClockStr = FormatClock(snapshot.CpuClockMHz);
-            string cpuDetailSmall = snapshot.CpuTemperatureC?.Status == MeasurementStatus.Available
-                ? $"{cpuClockStr} | {cpuTempStr}"
-                : cpuClockStr;
-
-            string gpuDetailSmall = snapshot.GpuTemperatureC?.Status == MeasurementStatus.Available
-                ? $"{gpuTempStr} | {gpuVramUsed}"
-                : gpuVramUsed;
-
-            var payload = new
-            {
-                cpu = FormatPercent(snapshot.CpuLoadPercent),
-                cpuClock = cpuClockStr,
-                cpuDetailSmall,
-                gpuDetailSmall,
-                gpu,
-                // igpu/dgpu are integration-class keys, not vendor keys: they
-                // report the load of a GPU known to be integrated with the CPU
-                // and of a GPU known to be discrete. When the integration class
-                // is unknown, the value is unavailable rather than a guess.
-                igpu = FormatPercentFromModel(_metrics.IntegratedGpuLoadPercent),
-                dgpu = FormatPercentFromModel(_metrics.DiscreteGpuLoadPercent),
-                ram = FormatRamUsage(snapshot),
-                ramUsed,
-                ramTotal,
-                ramCombined,
-                ramPercent = FormatPercent(snapshot.RamPercent),
-                ramCompact = $"{ramUsed} ({_metrics.RamPercent:F0}%)",
-                disk = FormatDiskUsage(snapshot),
-                diskUsed,
-                diskTotal,
-                diskCombined,
-                diskPercent = FormatPercent(snapshot.DiskPercent),
-                diskCompact = $"{diskUsed} ({_metrics.DiskPercent:F0}%)",
-                netDown = ByteFormatter.FormatNetworkSpeed(MeasurementValue(snapshot.NetworkDownloadBytesPerSec)),
-                netUp = ByteFormatter.FormatNetworkSpeed(MeasurementValue(snapshot.NetworkUploadBytesPerSec)),
-                cpuTemp = cpuTempStr,
-                gpuTemp = gpuTempStr,
-                tempSummary,
-                gpuVram = FormatGpuVram(snapshot) ?? "N/A",
-                gpuVramUsed,
-                lastUpdated = snapshot.Timestamp.ToString("h:mm:ss tt"),
-                acpiThermalZoneTemp = acpiThermalZoneTempStr
-            };
-
-            return JsonSerializer.Serialize(payload);
-        }
+            WidgetSize.Small => WidgetLayoutSize.Small,
+            WidgetSize.Large => WidgetLayoutSize.Large,
+            _ => WidgetLayoutSize.Medium,
+        };
 
         /// <summary>
-        /// Builds a payload from the current mutable model values, used for
-        /// immediate (non-pipeline) widget updates when no completed
-        /// snapshot exists yet.
+        /// Reads the persisted selection from the host's custom state.
+        ///
+        /// <para>
+        /// The custom state holds the instance id of the selected device, or
+        /// nothing when no device was selected. A value that cannot be read
+        /// is ignored rather than treated as a selection: an unresolvable
+        /// selection is worse than no selection, because it would make the
+        /// widget fall back to the default policy on every start.
+        /// </para>
         /// </summary>
-        private string CreateDataPayloadFromCurrentMetrics()
+        private static string? ReadPersistedSelection(string? customState)
         {
-            var timestamp = _lastSnapshotTimestamp != default
-                ? _lastSnapshotTimestamp
-                : DateTimeOffset.UtcNow;
-
-            // Build a minimal snapshot from current model values so the same
-            // payload builder is used for both pipeline and immediate paths.
-            var snapshot = MetricsSnapshot.Create(
-                timestamp,
-                cpuLoadPercent: Measurement.AvailableValue(_metrics.CpuPercent, "%", "Windows CPU counters"),
-                ramUsedBytes: Measurement.AvailableValue((double)_metrics.RamUsedBytes, "bytes", "GlobalMemoryStatusEx"),
-                ramTotalBytes: Measurement.AvailableValue((double)_metrics.RamTotalBytes, "bytes", "GlobalMemoryStatusEx"),
-                ramPercent: Measurement.AvailableValue(_metrics.RamPercent, "%", "GlobalMemoryStatusEx"),
-                diskUsedBytes: Measurement.AvailableValue(Math.Max(0, (double)_metrics.DiskUsedBytes), "bytes", "DriveInfo"),
-                diskTotalBytes: Measurement.AvailableValue(Math.Max(0, (double)_metrics.DiskTotalBytes), "bytes", "DriveInfo"),
-                diskPercent: Measurement.AvailableValue(_metrics.DiskPercent, "%", "DriveInfo"),
-                networkDownloadBytesPerSec: Measurement.AvailableValue(_metrics.NetworkDownloadBytesPerSec, "bytes/sec", "NetworkInterface"),
-                networkUploadBytesPerSec: Measurement.AvailableValue(_metrics.NetworkUploadBytesPerSec, "bytes/sec", "NetworkInterface"),
-                cpuClockMHz: _metrics.CpuClockMHz.HasValue
-                    ? Measurement.AvailableValue(_metrics.CpuClockMHz.Value, "MHz", "Win32_Processor")
-                    : null,
-                cpuTemperatureC: _metrics.CpuTemperature.HasValue
-                    ? Measurement.AvailableValue(_metrics.CpuTemperature.Value, "°C", "MSAcpi_ThermalZoneTemperature")
-                    : null,
-                gpuLoadPercent: _metrics.GpuLoadPercent.HasValue
-                    ? Measurement.AvailableValue(_metrics.GpuLoadPercent.Value, "%", "Device-identified backend")
-                    : null,
-                gpuTemperatureC: _metrics.GpuTemperature.HasValue
-                    ? Measurement.AvailableValue(_metrics.GpuTemperature.Value, "°C", "nvidia-smi")
-                    : null,
-                gpuVramUsedBytes: _metrics.GpuVramUsedBytes.HasValue
-                    ? Measurement.AvailableValue((double)_metrics.GpuVramUsedBytes.Value, "bytes", "nvidia-smi/WMI")
-                    : null,
-                gpuVramTotalBytes: _metrics.GpuVramTotalBytes.HasValue
-                    ? Measurement.AvailableValue((double)_metrics.GpuVramTotalBytes.Value, "bytes", "nvidia-smi/WMI")
-                    : null,
-                acpiThermalZoneTemperatureC: _metrics.AcpiThermalZoneTemperatureC.HasValue
-                    ? Measurement.AvailableValue(_metrics.AcpiThermalZoneTemperatureC.Value, "°C", "MSAcpi_ThermalZoneTemperature")
-                    : null);
-
-            return CreateDataPayload(snapshot);
-        }
-
-        private static string FormatMeasurement(Measurement? m, string format, string suffix)
-        {
-            if (m?.Status == MeasurementStatus.Available && m.Value.HasValue)
-                return m.Value.Value.ToString(format) + suffix;
-            return "N/A";
-        }
-
-        private static double MeasurementValue(Measurement? m)
-        {
-            return m?.Status == MeasurementStatus.Available && m.Value.HasValue
-                ? m.Value.Value
-                : 0.0;
-        }
-
-        private static string FormatPercent(Measurement? m) =>
-            m?.Status == MeasurementStatus.Available && m.Value.HasValue
-                ? $"{m.Value.Value:F1}%"
-                : "N/A";
-
-        private static string FormatPercentFromModel(double? value) =>
-            value.HasValue ? $"{value.Value:F1}%" : "N/A";
-
-        private static string FormatBytesMeasurement(Measurement? m) =>
-            m?.Status == MeasurementStatus.Available && m.Value.HasValue
-                ? ByteFormatter.FormatBytes(m.Value.Value)
-                : "N/A";
-
-        private static string FormatClock(Measurement? m) =>
-            m?.Status == MeasurementStatus.Available && m.Value.HasValue
-            ? (m.Value.Value >= 1000 ? $"{m.Value.Value / 1000.0:F2} GHz" : $"{m.Value.Value:F0} MHz")
-            : "N/A";
-
-        private static string FormatRamUsage(MetricsSnapshot snapshot)
-        {
-            if (snapshot.RamPercent?.Status == MeasurementStatus.Available && snapshot.RamPercent.Value.HasValue)
-            {
-                var usedStr = FormatBytesMeasurement(snapshot.RamUsedBytes);
-                var totalStr = FormatBytesMeasurement(snapshot.RamTotalBytes);
-                return $"{usedStr} / {totalStr} ({snapshot.RamPercent.Value:F1}%)";
-            }
-            return FormatBytesMeasurement(snapshot.RamUsedBytes);
-        }
-
-        private static string FormatDiskUsage(MetricsSnapshot snapshot)
-        {
-            if (snapshot.DiskPercent?.Status == MeasurementStatus.Available && snapshot.DiskPercent.Value.HasValue)
-            {
-                var usedStr = FormatBytesMeasurement(snapshot.DiskUsedBytes);
-                var totalStr = FormatBytesMeasurement(snapshot.DiskTotalBytes);
-                return $"{usedStr} / {totalStr} ({snapshot.DiskPercent.Value:F1}%)";
-            }
-            return FormatBytesMeasurement(snapshot.DiskUsedBytes);
-        }
-
-        private static string? FormatGpuVram(MetricsSnapshot snapshot)
-        {
-            if (snapshot.GpuVramUsedBytes?.Status != MeasurementStatus.Available || !snapshot.GpuVramUsedBytes.Value.HasValue)
+            if (string.IsNullOrWhiteSpace(customState))
                 return null;
-            if (snapshot.GpuVramTotalBytes?.Status == MeasurementStatus.Available
-                && snapshot.GpuVramTotalBytes.Value.HasValue
-                && snapshot.GpuVramTotalBytes.Value.Value > 0)
-            {
-                var used = snapshot.GpuVramUsedBytes.Value.Value;
-                var total = snapshot.GpuVramTotalBytes.Value.Value;
-                var pct = used / total * 100.0;
-                return ByteFormatter.FormatUsage(used, total, pct);
-            }
-            return ByteFormatter.FormatBytes(snapshot.GpuVramUsedBytes.Value.Value);
+
+            var trimmed = customState.Trim();
+            return trimmed.Length == 0 ? null : trimmed;
         }
 
+        /// <summary>
+        /// Releases this provider instance.
+        ///
+        /// <para>
+        /// The pipeline and the sensor backend are <i>shared</i>: they are
+        /// process-wide, because the widget host may create more than one
+        /// provider instance and every widget is served from the same
+        /// collection. Disposing the backend here would therefore close the
+        /// sensor source out from under a pipeline that is still running
+        /// for another widget.
+        /// </para>
+        ///
+        /// <para>
+        /// The process-wide resources are released by
+        /// <see cref="ShutdownAsync"/>, which runs after the last widget is
+        /// gone and awaits the pipeline's drain boundary first. This method
+        /// therefore does nothing: it exists because the host may release
+        /// an RCW at any time, and releasing one provider instance must not
+        /// affect the others.
+        /// </para>
+        /// </summary>
         public void Dispose()
         {
-            // Best-effort synchronous disposal; the preferred async shutdown
-            // path is ShutdownAsync(), called from Program.Main.
-            StopPipeline();
-            try
-            {
-                _metricsService?.Dispose();
-            }
-            catch { }
+            // Nothing is released here. The pipeline and the sensor backend
+            // belong to the process, not to this instance, and are released
+            // by ShutdownAsync() once the last widget has gone.
         }
     }
 }

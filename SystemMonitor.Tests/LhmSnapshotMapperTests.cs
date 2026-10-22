@@ -232,6 +232,54 @@ public class LhmSnapshotMapperTests
     }
 
     [Fact]
+    public void PrimaryGpuMatchesTheDocumentedSelectionPolicy()
+    {
+        // The mapper's primary-GPU choice and the widget's default choice
+        // must be the same device. They used to be two separate orderings,
+        // which meant the collection could measure one card while the
+        // widget presented another — putting one card's figures under the
+        // other's name.
+        var devices = new[] { LhmFixtures.IntelIntegratedGpu(), LhmFixtures.NvidiaGpu() };
+
+        var gpus = LhmSnapshotMapper.Project(devices).Gpus;
+
+        var mapperChoice = LhmSnapshotMapper.SelectPrimaryGpu(gpus);
+        var policyChoice = GpuSelectionPolicy.OrderForPresentation(gpus).First();
+
+        Assert.NotNull(mapperChoice);
+        Assert.Equal(policyChoice.DeviceId, mapperChoice!.DeviceId);
+    }
+
+    [Fact]
+    public void PrimaryGpuMatchesTheSelectionPolicy_ForEveryPermutation()
+    {
+        // The two orderings must agree for every arrangement of the device
+        // list, not just the one arrangement tested above.
+        var integrated = LhmFixtures.IntelIntegratedGpu();
+        var discrete = LhmFixtures.NvidiaGpu();
+        var amd = LhmFixtures.AmdGpu();
+
+        var permutations = new[]
+        {
+            new[] { integrated, discrete, amd },
+            new[] { amd, integrated, discrete },
+            new[] { discrete, amd, integrated },
+            new[] { amd, discrete, integrated },
+        };
+
+        foreach (var devices in permutations)
+        {
+            var gpus = LhmSnapshotMapper.Project(devices).Gpus;
+
+            var mapperChoice = LhmSnapshotMapper.SelectPrimaryGpu(gpus);
+            var policyChoice = GpuSelectionPolicy.OrderForPresentation(gpus).First();
+
+            Assert.NotNull(mapperChoice);
+            Assert.Equal(policyChoice.DeviceId, mapperChoice!.DeviceId);
+        }
+    }
+
+    [Fact]
     public void ProjectionToSnapshotKeepsSystemLevelMeasurements()
     {
         var result = LhmSnapshotMapper.Project(new[] { LhmFixtures.IntelCpu() });

@@ -82,6 +82,8 @@ namespace System_Monitor.Services
         public const string GpuTempKey = "gpuTemp";
         public const string GpuVramKey = "gpuVram";
         public const string GpuVramUsedKey = "gpuVramUsed";
+        public const string GpuVramLabelKey = "gpuVramLabel";
+        public const string GpuVramLabelCompactKey = "gpuVramLabelCompact";
         public const string GpuNameKey = "gpuName";
         public const string GpuVendorKey = "gpuVendor";
         public const string GpuIntegrationKey = "gpuIntegration";
@@ -119,7 +121,8 @@ namespace System_Monitor.Services
         public static readonly IReadOnlyList<string> TextKeys = new[]
         {
             CpuKey, CpuClockKey, CpuTempKey, CpuNameKey, CpuVendorKey,
-            GpuKey, GpuTempKey, GpuVramKey, GpuVramUsedKey,
+            GpuKey, GpuTempKey, GpuVramKey, GpuVramUsedKey, GpuVramLabelKey,
+            GpuVramLabelCompactKey,
             GpuNameKey, GpuVendorKey, GpuIntegrationKey, GpuLabelKey, GpuLabelCompactKey,
             GpuExtrasKey, GpuSelectionNoticeKey,
             RamKey, RamUsedKey, RamTotalKey, RamCombinedKey, RamPercentKey, RamCompactKey,
@@ -208,20 +211,24 @@ namespace System_Monitor.Services
             // default selection, but they must never be attributed to a
             // device the user explicitly chose: doing so would report one
             // card's figures as another's.
-            var useScalarFallback = !selection.IsUserSelected;
-
+            //
+            // Each figure carries the id of the device it describes, and the
+            // check is per figure: the load may come from the backend's
+            // primary GPU while the temperature comes from the reconciled
+            // NVIDIA fallback for a different card. A figure is used only
+            // when it names the device being presented.
             var gpuLoad = ResolveMetric(
                 snapshot, gpu?.DeviceId, LhmSensorSelection.GpuLoadMetric,
-                snapshot.GpuLoadPercent, useScalarFallback);
+                snapshot.GpuLoadPercent, snapshot.GpuLoadDeviceId).Measurement;
             var gpuTemp = ResolveMetric(
                 snapshot, gpu?.DeviceId, LhmSensorSelection.GpuTemperatureMetric,
-                snapshot.GpuTemperatureC, useScalarFallback);
+                snapshot.GpuTemperatureC, snapshot.GpuTemperatureDeviceId).Measurement;
             var gpuVramUsed = ResolveMetric(
                 snapshot, gpu?.DeviceId, LhmSensorSelection.GpuMemoryUsedMetric,
-                snapshot.GpuVramUsedBytes, useScalarFallback);
+                snapshot.GpuVramUsedBytes, snapshot.GpuVramUsedDeviceId);
             var gpuVramTotal = ResolveMetric(
                 snapshot, gpu?.DeviceId, LhmSensorSelection.GpuMemoryTotalMetric,
-                snapshot.GpuVramTotalBytes, useScalarFallback);
+                snapshot.GpuVramTotalBytes, snapshot.GpuVramTotalDeviceId);
 
             text[GpuNameKey] = FormatDeviceName(gpu?.DisplayName);
             text[GpuVendorKey] = FormatVendor(gpu?.Vendor);
@@ -231,8 +238,23 @@ namespace System_Monitor.Services
 
             text[GpuKey] = FormatPercent(gpuLoad);
             text[GpuTempKey] = FormatTemperature(gpuTemp);
-            text[GpuVramUsedKey] = FormatBytesValue(gpuVramUsed);
-            text[GpuVramKey] = FormatVram(gpuVramUsed, gpuVramTotal);
+
+            // The memory label and the memory figures are resolved
+            // together, because the label is a claim about the same
+            // readings the figures are drawn from. A label that outlived
+            // the figure it described would be a claim about a card the
+            // widget is no longer showing.
+            var gpuMemory = GpuMemoryPresentation.Resolve(
+                gpuVramUsed.Measurement,
+                gpuVramUsed.DeviceId,
+                gpuVramTotal.Measurement,
+                gpuVramTotal.DeviceId,
+                gpu?.DeviceId);
+
+            text[GpuVramUsedKey] = FormatBytesValue(gpuVramUsed.Measurement);
+            text[GpuVramKey] = gpuMemory.Display;
+            text[GpuVramLabelKey] = GpuMemoryPresentation.LabelText(gpuMemory.Label);
+            text[GpuVramLabelCompactKey] = GpuMemoryPresentation.CompactLabelText(gpuMemory.Label);
 
             flags[GpuDevicePresentKey] = gpu is not null;
             flags[GpuSelectionMissingKey] = selection.Outcome == GpuSelectionOutcome.SelectionMissing;
@@ -282,11 +304,12 @@ namespace System_Monitor.Services
             text[NetUpKey] = FormatNetworkSpeed(snapshot.NetworkUploadBytesPerSec);
 
             // --- Temperatures ------------------------------------------------
-            var acpiTemp = snapshot.Readings
-                .Where(r => r.Metric == "AcpiThermalZoneTemperatureC")
-                .Select(r => r.Measurement)
-                .FirstOrDefault(m => m is not null);
-            text[AcpiThermalZoneTempKey] = FormatTemperature(acpiTemp);
+            // The ACPI thermal-zone average comes from an unidentified
+            // sensor, so it is published as its own scalar measurement
+            // rather than as a device reading. It is read from the
+            // snapshot's field, which carries the status the collector
+            // recorded for it.
+            text[AcpiThermalZoneTempKey] = FormatTemperature(snapshot.AcpiThermalZoneTemperatureC);
 
             text[TempSummaryKey] = FormatTemperatureSummary(
                 FormatTemperature(snapshot.CpuTemperatureC),
@@ -338,58 +361,15 @@ namespace System_Monitor.Services
             text[GpuExtrasKey] = string.Empty;
             text[GpuIntegrationKey] = string.Empty;
 
+            // The memory heading is a neutral label rather than the
+            // unavailable placeholder: "N/A" is the right answer for a
+            // figure that could not be read, but the heading is not a
+            // figure. It names what the column is, and with no reading at
+            // all it claims no memory pool.
+            text[GpuVramLabelKey] = GpuMemoryPresentation.UnspecifiedLabel;
+            text[GpuVramLabelCompactKey] = GpuMemoryPresentation.UnspecifiedLabel;
+
             return new WidgetPayload(text, flags);
-        }
-
-        // ------------------------------------------------------------------
-        // Device selection
-        // ------------------------------------------------------------------
-
-        /// <summary>
-        /// A GPU the user may choose from, as offered by the device picker.
-        ///
-        /// <para>
-        /// <see cref="InstanceId"/> is the device's per-instance identity and
-        /// is what a selection is persisted against. It is null for a device
-        /// the backend cannot identify per instance; such a device is
-        /// described but cannot be selected, because a selection has to be
-        /// resolvable after a restart.
-        /// </para>
-        /// </summary>
-        public sealed record GpuChoiceOption(string? InstanceId, string Title, bool IsSelected);
-
-        /// <summary>
-        /// Lists the GPUs the user may choose from, in the same stable order
-        /// the default policy uses, so the first entry is the device the
-        /// widget would present without a selection.
-        /// </summary>
-        public static IReadOnlyList<GpuChoiceOption> BuildGpuChoices(
-            MetricsSnapshot? snapshot,
-            string? selectedGpuInstanceId)
-        {
-            if (snapshot is null)
-                return Array.Empty<GpuChoiceOption>();
-
-            var selected = GpuSelectionPolicy.Resolve(snapshot.Gpus, selectedGpuInstanceId);
-
-            var choices = new List<GpuChoiceOption>();
-            foreach (var device in GpuSelectionPolicy.OrderForPresentation(snapshot.Gpus))
-            {
-                var hasInstanceId = !string.IsNullOrEmpty(device.InstanceId);
-                var isSelected = hasInstanceId
-                    && selected.Device is not null
-                    && string.Equals(
-                        selected.Device.InstanceId,
-                        device.InstanceId,
-                        StringComparison.OrdinalIgnoreCase);
-
-                choices.Add(new GpuChoiceOption(
-                    hasInstanceId ? device.InstanceId : null,
-                    ComposeDeviceLabel(device, maxLength: 30),
-                    isSelected));
-            }
-
-            return choices;
         }
 
         // ------------------------------------------------------------------
@@ -655,31 +635,65 @@ namespace System_Monitor.Services
         /// reading when it has a usable one, otherwise the snapshot's scalar
         /// value — but only when the scalar is known to describe the same
         /// device.
+        ///
+        /// <para>
+        /// The result carries the id of the device the chosen figure
+        /// describes, so that a figure presented for this device is never
+        /// paired with another figure that describes a different device.
+        /// </para>
         /// </summary>
-        private static Measurement? ResolveMetric(
+        /// <param name="snapshot">The completed collection.</param>
+        /// <param name="deviceId">The device being presented, or null.</param>
+        /// <param name="metric">The metric's name.</param>
+        /// <param name="scalar">The snapshot's flattened figure for the metric.</param>
+        /// <param name="scalarDeviceId">
+        /// The device the scalar figure describes, or null when the
+        /// collection could not attribute it.
+        /// </param>
+        private static ResolvedMetric ResolveMetric(
             MetricsSnapshot snapshot,
             string? deviceId,
             string metric,
             Measurement? scalar,
-            bool allowScalarFallback)
+            string? scalarDeviceId)
         {
             var deviceValue = DeviceMetric(snapshot, deviceId, metric);
 
             if (IsUsable(deviceValue))
-                return deviceValue;
+                return new ResolvedMetric(deviceValue, deviceId);
 
-            if (!allowScalarFallback)
-                return deviceValue;
+            // The scalar is a fallback for the device only when it names
+            // that device. A figure attributed to a different card, or to
+            // no card at all, is never presented under this device's name.
+            var scalarMatches = deviceId is not null
+                && scalarDeviceId is not null
+                && string.Equals(scalarDeviceId, deviceId, StringComparison.Ordinal);
+
+            if (!scalarMatches)
+                return new ResolvedMetric(deviceValue, deviceId);
 
             // A device-level reading that exists but is unusable (no sensor,
             // or a failed read) is preferred over the scalar when the
             // scalar belongs to a different device, so the scalar is only
             // used when the device reported nothing at all.
             if (deviceValue is not null && !IsUsable(scalar))
-                return deviceValue;
+                return new ResolvedMetric(deviceValue, deviceId);
 
-            return IsUsable(scalar) ? scalar : deviceValue;
+            return IsUsable(scalar)
+                ? new ResolvedMetric(scalar, scalarDeviceId)
+                : new ResolvedMetric(deviceValue, deviceId);
         }
+
+        /// <summary>
+        /// One metric's chosen figure, and the device that figure
+        /// describes.
+        /// </summary>
+        /// <param name="Measurement">The chosen figure, or null.</param>
+        /// <param name="DeviceId">
+        /// The device the figure describes, or null when it names no
+        /// device.
+        /// </param>
+        private readonly record struct ResolvedMetric(Measurement? Measurement, string? DeviceId);
 
         /// <summary>
         /// Formats a measurement with a value formatter.
@@ -729,37 +743,38 @@ namespace System_Monitor.Services
             Format(measurement, ByteFormatter.FormatBytes);
 
         /// <summary>
-        /// Formats dedicated-memory usage as "used / total (percent)", or
-        /// just the used amount when the total is not known.
-        /// </summary>
-        private static string FormatVram(Measurement? used, Measurement? total)
-        {
-            if (!IsUsable(used) || !used!.Value.HasValue)
-                return NotAvailable;
-
-            if (IsUsable(total) && total!.Value is { } t && t > 0)
-            {
-                var pct = used.Value!.Value / t * 100.0;
-                return $"{ByteFormatter.FormatBytes(used.Value!.Value)} / {ByteFormatter.FormatBytes(t)} ({pct:F1}%)";
-            }
-
-            return ByteFormatter.FormatBytes(used.Value!.Value);
-        }
-
-        /// <summary>
         /// Formats a used/total/percent triple, falling back to the used
         /// amount when the percentage is not available.
+        ///
+        /// <para>
+        /// The three figures are system-level, so there is no device to
+        /// attribute them to and no two memory pools to reconcile. What
+        /// still has to hold is that the figures describe one coherent
+        /// measurement: a capacity of zero cannot carry a percentage, a
+        /// usage above the capacity proves the figures come from different
+        /// readings, and a figure that is unavailable must not be shown
+        /// beside a percentage that was computed without it.
+        /// </para>
         /// </summary>
         private static string FormatUsage(Measurement? used, Measurement? total, Measurement? percent)
         {
-            if (IsUsable(percent) && percent!.Value.HasValue)
-            {
-                var usedStr = FormatBytesValue(used);
-                var totalStr = FormatBytesValue(total);
-                return $"{usedStr} / {totalStr} ({percent.Value:F1}%)";
-            }
+            if (!IsUsable(used) || !used!.Value.HasValue)
+                return FormatBytesValue(used);
 
-            return FormatBytesValue(used);
+            var usedValue = used.Value.Value;
+
+            if (!IsUsable(total) || !total!.Value.HasValue)
+                return FormatBytesValue(used);
+
+            var totalValue = total.Value.Value;
+
+            if (totalValue <= 0 || usedValue > totalValue)
+                return FormatBytesValue(used);
+
+            if (!IsUsable(percent) || !percent!.Value.HasValue)
+                return $"{ByteFormatter.FormatBytes(usedValue)} / {ByteFormatter.FormatBytes(totalValue)}";
+
+            return $"{ByteFormatter.FormatBytes(usedValue)} / {ByteFormatter.FormatBytes(totalValue)} ({percent.Value.Value:F1}%)";
         }
 
         /// <summary>

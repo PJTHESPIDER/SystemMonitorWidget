@@ -131,43 +131,60 @@ namespace System_Monitor.Services
                     false => GpuIntegration.Discrete,
                     null => GpuIntegration.Unknown,
                 },
+            PciDeviceKey = string.IsNullOrWhiteSpace(device.PciDeviceKey) ? null : device.PciDeviceKey,
+            InstanceId = string.IsNullOrWhiteSpace(device.InstanceId) ? null : device.InstanceId,
         };
 
         /// <summary>
         /// Selects the GPU whose readings back the single-GPU legacy payload
         /// keys.
         ///
-        /// Preference order:
-        ///   1. A GPU known to be discrete — it is the device whose load and
-        ///      temperature are the conventional headline figures.
-        ///   2. A GPU whose integration class is unknown — it may well be
-        ///      discrete, and a separate card is a more useful headline than
-        ///      the integrated part of the CPU.
-        ///   3. A GPU known to be integrated — the on-die part is the
-        ///      secondary device and is only the headline when nothing else
-        ///      is present.
+        /// <para>
+        /// The order is the one <see cref="GpuSelectionPolicy"/> documents
+        /// and applies:
+        /// </para>
         ///
-        /// The tie-break is the device id, so the choice is stable across
-        /// collections and does not depend on enumeration order.
+        /// <list type="number">
+        /// <item><description>
+        /// A GPU known to be discrete — it is the device whose load and
+        /// temperature are the conventional headline figures.
+        /// </description></item>
+        /// <item><description>
+        /// A GPU whose integration class is unknown — it may well be
+        /// discrete, and a separate card is a more useful headline than
+        /// the integrated part of the CPU.
+        /// </description></item>
+        /// <item><description>
+        /// A GPU known to be integrated — the on-die part is the secondary
+        /// device and is only the headline when nothing else is present.
+        /// </description></item>
+        /// </list>
+        ///
+        /// <para>
+        /// The tie-break is the device's instance identity, then its device
+        /// id, so the choice is stable across collections and does not
+        /// depend on enumeration order.
+        /// </para>
+        ///
+        /// <para>
+        /// <b>This must be the same choice the widget presents.</b> The
+        /// collection measures this device's sensors and publishes them as
+        /// the snapshot's scalar GPU figures; the widget then falls back to
+        /// those figures when the presented device has no reading of its
+        /// own. If the two chose different devices, the widget would
+        /// present one card's figures under another card's name. The
+        /// ordering therefore lives in one place —
+        /// <see cref="GpuSelectionPolicy"/> — and this method delegates to
+        /// it.
+        /// </para>
         /// </summary>
         public static HardwareDevice? SelectPrimaryGpu(IReadOnlyList<HardwareDevice> gpus)
         {
             if (gpus is null || gpus.Count == 0)
                 return null;
 
-            return gpus
-                .OrderBy(g => IntegrationRank(g.GpuIntegration))
-                .ThenBy(g => g.DeviceId, StringComparer.Ordinal)
-                .First();
+            return GpuSelectionPolicy.OrderForPresentation(gpus).FirstOrDefault();
         }
-
-        private static int IntegrationRank(GpuIntegration integration) => integration switch
-        {
-            GpuIntegration.Discrete => 0,
-            GpuIntegration.Unknown => 1,
-            GpuIntegration.Integrated => 2,
-            _ => 3,
-        };
 
         /// <summary>
         /// Selects the CPU whose readings back the single-CPU legacy payload

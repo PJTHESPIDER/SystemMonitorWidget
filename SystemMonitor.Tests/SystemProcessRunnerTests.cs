@@ -149,4 +149,112 @@ public class SystemProcessRunnerTests
             try { File.Delete(script); } catch { /* best effort */ }
         }
     }
+
+    [Fact]
+    public async Task BoundsTheDrainAfterTheChildHasExited()
+    {
+        // The child exits promptly, but a grandchild inherits the pipe
+        // handles and keeps the write end open. Without a bound on the
+        // drain, the runner would wait for that grandchild — which is the
+        // one unbounded wait in an otherwise bounded runner, and it would
+        // hold the pipeline's collection open with it.
+        var script = Path.Combine(Path.GetTempPath(), $"hold-pipes-{Guid.NewGuid():N}.cmd");
+        await File.WriteAllTextAsync(script, string.Join(Environment.NewLine, new[]
+        {
+            "@echo off",
+            "start /b cmd /c timeout /t 60 /nobreak > nul",
+            "echo child-done",
+        }));
+
+        try
+        {
+            var runner = new SystemProcessRunner();
+
+            var started = Stopwatch.StartNew();
+            var result = await runner.RunAsync(
+                Shell,
+                $"/c \"{script}\"",
+                TimeSpan.FromSeconds(30));
+            started.Stop();
+
+            // The runner returns on its own. The grandchild may still be
+            // running, but the runner does not wait for it.
+            Assert.True(
+                started.Elapsed < TimeSpan.FromSeconds(20),
+                $"took {started.Elapsed}, which suggests the drain was unbounded");
+        }
+        finally
+        {
+            try { File.Delete(script); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task ReportsWhetherTheChildWasTerminatedOnTimeout()
+    {
+        // The fallback logs whether a surviving child was left behind. A
+        // child that ignores the kill would accumulate one process per
+        // collection cycle, so the two cases must be distinguishable.
+        var runner = new SystemProcessRunner();
+
+        var result = await runner.RunAsync(
+            Shell,
+            "/c ping -n 60 127.0.0.1 > nul",
+            TimeSpan.FromSeconds(2));
+
+        Assert.True(result.TimedOut);
+        Assert.True(
+            result.ChildTerminated,
+            "a child that the runner killed must be reported as terminated");
+    }
+
+    [Fact]
+    public async Task ACancelledRunReturnsWithoutWaitingForTheTimeout()
+    {
+        // The collector is cancelled when the pipeline is torn down. The
+        // child is killed so the wait ends immediately, rather than running
+        // the full timeout for a result nobody will read.
+        var runner = new SystemProcessRunner();
+
+        using var cancellation = new CancellationTokenSource();
+
+        // The cancellation is scheduled before the run starts, because the
+        // runner waits for the child synchronously: the call does not return
+        // to the caller until the child has exited or the timeout has
+        // elapsed.
+        cancellation.CancelAfter(TimeSpan.FromMilliseconds(200));
+
+        var started = Stopwatch.StartNew();
+
+        var result = await runner.RunAsync(
+            Shell,
+            "/c ping -n 60 127.0.0.1 > nul",
+            TimeSpan.FromSeconds(60),
+            cancellation.Token);
+
+        started.Stop();
+
+        Assert.True(
+            started.Elapsed < TimeSpan.FromSeconds(20),
+            $"took {started.Elapsed}, which suggests the cancellation was ignored");
+        Assert.False(result.Succeeded);
+    }
+
+    [Fact]
+    public async Task ANormalExitReportsTheChildAsTerminated()
+    {
+        // A child that exited on its own is trivially "terminated". The
+        // flag exists to distinguish a surviving child, so the ordinary
+        // case must not look like a failure.
+        var runner = new SystemProcessRunner();
+
+        var result = await runner.RunAsync(
+            Shell,
+            "/c echo done",
+            TimeSpan.FromSeconds(30));
+
+        Assert.True(result.Succeeded, result.StandardError);
+        Assert.True(result.ChildTerminated);
+        Assert.False(result.TimedOut);
+    }
 }

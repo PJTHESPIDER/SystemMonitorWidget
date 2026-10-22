@@ -1,18 +1,47 @@
 using System;
-using System.Collections.ObjectModel;
+using System.Collections.Generic;
 using System.ComponentModel;
-using System_Monitor.Services;
 
 namespace System_Monitor.Models
 {
+    /// <summary>
+    /// The mutable view of the machine's current metrics.
+    ///
+    /// <para><b>What this type is for</b></para>
+    ///
+    /// <para>
+    /// The widget is served from an immutable <see cref="MetricsSnapshot"/>,
+    /// which is the authoritative record of a collection. This model is the
+    /// working view the collectors write into between collections, and it
+    /// exists so a collector can read back what another collector found.
+    /// </para>
+    ///
+    /// <para><b>Notifications</b></para>
+    ///
+    /// <para>
+    /// A notification is raised only when the value actually changed. The
+    /// collectors write on every cycle — every five seconds — and most of
+    /// those writes do not change the value: the RAM total is constant, the
+    /// disk size is constant, the VRAM total is constant. Raising a
+    /// notification for an unchanged value costs a comparison, an event
+    /// dispatch and a string allocation, and buys nothing, because a
+    /// listener that re-reads an unchanged value has nothing to redraw.
+    /// </para>
+    ///
+    /// <para><b>Formatting</b></para>
+    ///
+    /// <para>
+    /// This type holds measurements, not formatted text. The display
+    /// strings live with the presenters that produce them
+    /// (<see cref="Services.ByteFormatter"/>,
+    /// <see cref="Services.WidgetPayloadPresenter"/>), so the formatting
+    /// rules are stated once and the model stays a model.
+    /// </para>
+    /// </summary>
     public class SystemMetrics : INotifyPropertyChanged
     {
         private double _cpuPercent;
-        private double? _gpuPercent;
         private double? _gpuLoadPercent;
-        private double? _integratedGpuLoadPercent;
-        private double? _discreteGpuLoadPercent;
-        private double? _nvidiaGpuPercent;
         private double? _cpuTemperature;
         private double? _gpuTemperature;
         private double? _acpiThermalZoneTemperatureC;
@@ -30,68 +59,46 @@ namespace System_Monitor.Models
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
+        /// <summary>
+        /// The CPU load, as a percentage.
+        /// </summary>
         public double CpuPercent
         {
             get => _cpuPercent;
-            set { _cpuPercent = value; OnPropertyChanged(nameof(CpuPercent)); }
-        }
-
-        public double? GpuPercent
-        {
-            get => _gpuPercent;
-            set { _gpuPercent = value; OnPropertyChanged(nameof(GpuPercent)); }
+            set => Set(ref _cpuPercent, value);
         }
 
         /// <summary>
         /// Load of the primary (preferably discrete) GPU, as reported by a
         /// device-identified sensor backend. Null when no such sensor is
-        /// readable. This is distinct from <see cref="GpuPercent"/>, which is
-        /// the legacy Windows engine-counter average.
+        /// readable. This is the device-identified figure; the Windows
+        /// engine-counter average is not device-attributed and is not
+        /// presented.
         /// </summary>
         public double? GpuLoadPercent
         {
             get => _gpuLoadPercent;
-            set { _gpuLoadPercent = value; OnPropertyChanged(nameof(GpuLoadPercent)); }
+            set => Set(ref _gpuLoadPercent, value);
         }
 
         /// <summary>
-        /// Load of the GPU known to be integrated with the CPU, from a
-        /// device-identified sensor backend. Null when no such GPU is known
-        /// or its load is unreadable.
+        /// CPU temperature in degrees Celsius. Null when the sensor is not
+        /// readable.
         /// </summary>
-        public double? IntegratedGpuLoadPercent
-        {
-            get => _integratedGpuLoadPercent;
-            set { _integratedGpuLoadPercent = value; OnPropertyChanged(nameof(IntegratedGpuLoadPercent)); }
-        }
-
-        /// <summary>
-        /// Load of the GPU known to be discrete, from a device-identified
-        /// sensor backend. Null when no such GPU is known or its load is
-        /// unreadable.
-        /// </summary>
-        public double? DiscreteGpuLoadPercent
-        {
-            get => _discreteGpuLoadPercent;
-            set { _discreteGpuLoadPercent = value; OnPropertyChanged(nameof(DiscreteGpuLoadPercent)); }
-        }
-
-        public double? NvidiaGpuPercent
-        {
-            get => _nvidiaGpuPercent;
-            set { _nvidiaGpuPercent = value; OnPropertyChanged(nameof(NvidiaGpuPercent)); }
-        }
-
         public double? CpuTemperature
         {
             get => _cpuTemperature;
-            set { _cpuTemperature = value; OnPropertyChanged(nameof(CpuTemperature)); }
+            set => Set(ref _cpuTemperature, value);
         }
 
+        /// <summary>
+        /// GPU temperature in degrees Celsius. Null when the sensor is not
+        /// readable.
+        /// </summary>
         public double? GpuTemperature
         {
             get => _gpuTemperature;
-            set { _gpuTemperature = value; OnPropertyChanged(nameof(GpuTemperature)); }
+            set => Set(ref _gpuTemperature, value);
         }
 
         /// <summary>
@@ -102,157 +109,134 @@ namespace System_Monitor.Models
         public double? AcpiThermalZoneTemperatureC
         {
             get => _acpiThermalZoneTemperatureC;
-            set { _acpiThermalZoneTemperatureC = value; OnPropertyChanged(nameof(AcpiThermalZoneTemperatureC)); }
+            set => Set(ref _acpiThermalZoneTemperatureC, value);
         }
 
-        public double RamPercent
-        {
-            get => _ramPercent;
-            set
-            {
-                _ramPercent = value;
-                OnPropertyChanged(nameof(RamPercent));
-                OnPropertyChanged(nameof(RamDisplay));
-            }
-        }
-
+        /// <summary>
+        /// Used physical memory, in bytes.
+        /// </summary>
         public ulong RamUsedBytes
         {
             get => _ramUsedBytes;
-            set
-            {
-                _ramUsedBytes = value;
-                OnPropertyChanged(nameof(RamUsedBytes));
-                OnPropertyChanged(nameof(RamDisplay));
-            }
+            set => Set(ref _ramUsedBytes, value);
         }
 
+        /// <summary>
+        /// Total physical memory, in bytes.
+        /// </summary>
         public ulong RamTotalBytes
         {
             get => _ramTotalBytes;
-            set
-            {
-                _ramTotalBytes = value;
-                OnPropertyChanged(nameof(RamTotalBytes));
-                OnPropertyChanged(nameof(RamDisplay));
-            }
+            set => Set(ref _ramTotalBytes, value);
         }
 
-        public string RamDisplay => ByteFormatter.FormatUsage(RamUsedBytes, RamTotalBytes, RamPercent);
-
-        public double DiskPercent
+        /// <summary>
+        /// Used physical memory as a percentage of the total.
+        /// </summary>
+        public double RamPercent
         {
-            get => _diskPercent;
-            set
-            {
-                _diskPercent = value;
-                OnPropertyChanged(nameof(DiskPercent));
-                OnPropertyChanged(nameof(DiskDisplay));
-            }
+            get => _ramPercent;
+            set => Set(ref _ramPercent, value);
         }
 
+        /// <summary>
+        /// Used space on the system drive, in bytes.
+        /// </summary>
         public long DiskUsedBytes
         {
             get => _diskUsedBytes;
-            set
-            {
-                _diskUsedBytes = value;
-                OnPropertyChanged(nameof(DiskUsedBytes));
-                OnPropertyChanged(nameof(DiskDisplay));
-            }
+            set => Set(ref _diskUsedBytes, value);
         }
 
+        /// <summary>
+        /// Total space on the system drive, in bytes.
+        /// </summary>
         public long DiskTotalBytes
         {
             get => _diskTotalBytes;
-            set
-            {
-                _diskTotalBytes = value;
-                OnPropertyChanged(nameof(DiskTotalBytes));
-                OnPropertyChanged(nameof(DiskDisplay));
-            }
+            set => Set(ref _diskTotalBytes, value);
         }
 
-        public string DiskDisplay => ByteFormatter.FormatUsage(Math.Max(0, DiskUsedBytes), Math.Max(0, DiskTotalBytes), DiskPercent);
+        /// <summary>
+        /// Used space on the system drive as a percentage of the total.
+        /// </summary>
+        public double DiskPercent
+        {
+            get => _diskPercent;
+            set => Set(ref _diskPercent, value);
+        }
 
+        /// <summary>
+        /// Download throughput across all included interfaces, in bytes
+        /// per second.
+        /// </summary>
         public double NetworkDownloadBytesPerSec
         {
             get => _networkDownloadBytesPerSec;
-            set { _networkDownloadBytesPerSec = value; OnPropertyChanged(nameof(NetworkDownloadBytesPerSec)); }
+            set => Set(ref _networkDownloadBytesPerSec, value);
         }
 
+        /// <summary>
+        /// Upload throughput across all included interfaces, in bytes per
+        /// second.
+        /// </summary>
         public double NetworkUploadBytesPerSec
         {
             get => _networkUploadBytesPerSec;
-            set { _networkUploadBytesPerSec = value; OnPropertyChanged(nameof(NetworkUploadBytesPerSec)); }
+            set => Set(ref _networkUploadBytesPerSec, value);
         }
 
+        /// <summary>
+        /// Dedicated GPU memory in use, in bytes. Null when the figure is
+        /// not readable.
+        /// </summary>
         public ulong? GpuVramUsedBytes
         {
             get => _gpuVramUsedBytes;
-            set
-            {
-                _gpuVramUsedBytes = value;
-                OnPropertyChanged(nameof(GpuVramUsedBytes));
-                OnPropertyChanged(nameof(GpuVramDisplay));
-            }
+            set => Set(ref _gpuVramUsedBytes, value);
         }
 
+        /// <summary>
+        /// Total dedicated GPU memory, in bytes. Null when the figure is
+        /// not readable.
+        /// </summary>
         public ulong? GpuVramTotalBytes
         {
             get => _gpuVramTotalBytes;
-            set
-            {
-                _gpuVramTotalBytes = value;
-                OnPropertyChanged(nameof(GpuVramTotalBytes));
-                OnPropertyChanged(nameof(GpuVramDisplay));
-            }
+            set => Set(ref _gpuVramTotalBytes, value);
         }
 
-        public string? GpuVramDisplay
-        {
-            get
-            {
-                if (!_gpuVramUsedBytes.HasValue) return null;
-                if (_gpuVramTotalBytes.HasValue && _gpuVramTotalBytes.Value > 0)
-                {
-                    var pct = (double)_gpuVramUsedBytes.Value / _gpuVramTotalBytes.Value * 100.0;
-                    return ByteFormatter.FormatUsage(_gpuVramUsedBytes.Value, _gpuVramTotalBytes.Value, pct);
-                }
-                return ByteFormatter.FormatBytes(_gpuVramUsedBytes.Value);
-            }
-        }
-
+        /// <summary>
+        /// CPU clock rate in megahertz. Null when the figure is not
+        /// readable.
+        /// </summary>
         public double? CpuClockMHz
         {
             get => _cpuClockMHz;
-            set
-            {
-                _cpuClockMHz = value;
-                OnPropertyChanged(nameof(CpuClockMHz));
-                OnPropertyChanged(nameof(CpuClockDisplay));
-            }
+            set => Set(ref _cpuClockMHz, value);
         }
 
-        public string CpuClockDisplay
+        /// <summary>
+        /// Assigns a value and notifies only when it actually changed.
+        /// </summary>
+        private void Set<T>(ref T field, T value, [System.Runtime.CompilerServices.CallerMemberName] string? propertyName = null)
         {
-            get
-            {
-                if (!_cpuClockMHz.HasValue) return "N/A";
-                var mhz = _cpuClockMHz.Value;
-                return mhz >= 1000 ? $"{mhz / 1000.0:F2} GHz" : $"{mhz:F0} MHz";
-            }
+            if (EqualityComparer<T>.Default.Equals(field, value))
+                return;
+
+            field = value;
+            OnPropertyChanged(propertyName);
         }
 
+        /// <summary>
+        /// Raises the change notification.
+        /// </summary>
+        protected void OnPropertyChanged(string? name)
+        {
+            if (name is null)
+                return;
 
-        // Chart series (simple rolling collections)
-        public ObservableCollection<double> CpuSeries { get; } = new ObservableCollection<double>();
-        public ObservableCollection<double> RamSeries { get; } = new ObservableCollection<double>();
-        public ObservableCollection<double> DiskSeries { get; } = new ObservableCollection<double>();
-        public ObservableCollection<double> NetworkDownloadSeries { get; } = new ObservableCollection<double>();
-        public ObservableCollection<double> NetworkUploadSeries { get; } = new ObservableCollection<double>();
-
-        protected void OnPropertyChanged(string name) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
     }
 }

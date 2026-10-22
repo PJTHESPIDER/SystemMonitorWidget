@@ -1,261 +1,136 @@
 using System;
-using System.Linq;
-using System.Management;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Management;
 
 namespace System_Monitor.Services
 {
+    /// <summary>
+    /// Vendor-neutral GPU metrics read from the Windows performance
+    /// counters.
+    ///
+    /// <para>
+    /// The cross-vendor sensor backend (LibreHardwareMonitor) is the
+    /// primary source for GPU temperature and VRAM. The Windows counters
+    /// are the source for the dedicated-memory figures the backend does
+    /// not always expose.
+    /// </para>
+    ///
+    /// <para>
+    /// The Windows counters are not device-identified. They report one
+    /// figure per adapter, keyed by an LUID, and the widget may be
+    /// presenting any one of several adapters. A figure is therefore only
+    /// used when the counters described exactly one adapter; otherwise it
+    /// is ambiguous, and an ambiguous figure is reported as unavailable
+    /// rather than attributed to a device it may not describe. See
+    /// <see cref="GpuMemoryFallbackPolicy"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// The NVIDIA command-line tool is consulted only for a metric the
+    /// primary source could not supply. See <see cref="NvidiaGpuFallback"/>
+    /// for what "optional fallback" means in practice.
+    /// </para>
+    /// </summary>
     public sealed class GpuService
     {
-        // Attempts WMI and Performance Counter methods for GPU usage estimation.
-        public double? GetGpuPercentBestEffort()
-        {
-            return GetIntelGpuPercentBestEffort();
-        }
-
-        public double? GetGpuTemperatureBestEffort()
-        {
-            var nvidiaTemp = GetNvidiaGpuTemperature();
-            if (nvidiaTemp.HasValue)
-                return nvidiaTemp;
-
-            return GetIntelGpuTemperatureBestEffort();
-        }
+        /// <summary>
+        /// The backend name used in the diagnostic log.
+        /// </summary>
+        public const string BackendName = "gpu-counters";
 
         /// <summary>
         /// Returns (usedBytes, totalBytes). Either may be null if unavailable.
-        /// Tries nvidia-smi first, then WMI performance counters.
+        ///
+        /// The caller is responsible for preferring the device-identified
+        /// backend's value; this method is the fallback path, which uses the
+        /// Windows GPU memory counters.
         /// </summary>
         public (ulong? usedBytes, ulong? totalBytes) GetGpuVramBestEffort()
         {
-            // NVIDIA via nvidia-smi
-            var nvidia = GetNvidiaGpuVram();
-            if (nvidia.usedBytes.HasValue || nvidia.totalBytes.HasValue)
-                return nvidia;
-
-            // Fallback: WMI GPU local video memory counters
             return GetWmiGpuVram();
         }
 
-        private (ulong? usedBytes, ulong? totalBytes) GetNvidiaGpuVram()
-        {
-            try
-            {
-                var proc = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = @"C:\Windows\System32\nvidia-smi.exe",
-                        Arguments = "--query-gpu=memory.used,memory.total --format=csv,noheader,nounits",
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        CreateNoWindow = true
-                    }
-                };
-                proc.Start();
-                string output = proc.StandardOutput.ReadToEnd().Trim();
-                proc.WaitForExit();
-
-                // Output: "1234, 8192"  (MiB values)
-                var parts = output.Split(',');
-                if (parts.Length >= 2
-                    && ulong.TryParse(parts[0].Trim(), out var usedMiB)
-                    && ulong.TryParse(parts[1].Trim(), out var totalMiB))
-                {
-                    return (usedMiB * 1024 * 1024, totalMiB * 1024 * 1024);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Failed to get NVIDIA VRAM: {ex.Message}");
-            }
-            return (null, null);
-        }
-
+        /// <summary>
+        /// Reads the dedicated video memory usage from the Windows GPU
+        /// adapter-memory counters.
+        ///
+        /// <para>
+        /// The counters report one instance per adapter. A figure is only
+        /// used when exactly one adapter was reported, because otherwise
+        /// there is no way to know which adapter the figure describes.
+        /// Summing the used figures across adapters would report the
+        /// machine's total GPU memory in use as one card's usage; taking
+        /// the first adapter's capacity would report the integrated part's
+        /// capacity as the discrete card's. Both misattribute another
+        /// device's reading, so an ambiguous reading is reported as
+        /// unavailable instead.
+        /// </para>
+        /// </summary>
         private (ulong? usedBytes, ulong? totalBytes) GetWmiGpuVram()
         {
-            ulong? usedBytes = null;
-            ulong? totalBytes = null;
+            var readings = new GpuMemoryCounterReadings(
+                Array.Empty<GpuAdapterMemorySample>(),
+                Array.Empty<ulong>());
+
+            var started = Stopwatch.StartNew();
+
             try
             {
                 // Try dedicated video memory usage counter
                 using var searcher = new ManagementObjectSearcher("root\\CIMV2",
-                    "SELECT * FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPULocalVideoMemory");
+                    "SELECT * FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory");
                 var col = searcher.Get();
-                ulong totalUsed = 0; ulong totalCapacity = 0; bool any = false;
+                var samples = new List<GpuAdapterMemorySample>();
                 foreach (ManagementObject mo in col)
                 {
-                    if (mo["CurrentUsage"] is ulong used) { totalUsed += used; any = true; }
-                    if (mo["AvailableUsage"] is ulong avail && mo["CurrentUsage"] is ulong u2)
-                        totalCapacity += u2 + avail;
+                    if (mo["DedicatedUsage"] is ulong used)
+                    {
+                        var name = mo["Name"] as string ?? string.Empty;
+                        samples.Add(new GpuAdapterMemorySample(name, used));
+                    }
                 }
-                if (any)
-                {
-                    usedBytes = totalUsed * 1024; // counter is in KB
-                    if (totalCapacity > 0) totalBytes = totalCapacity * 1024;
-                }
+
+                readings = readings with { UsedBytes = samples };
             }
-            catch { }
+            catch (Exception ex)
+            {
+                DiagnosticLog.Shared.Warning(
+                    BackendName,
+                    "vram-used",
+                    "unavailable",
+                    elapsed: started.Elapsed,
+                    detail: DiagnosticDetail.Describe(ex));
+            }
 
             // Fallback: Win32_VideoController for total only
-            if (!totalBytes.HasValue)
-            {
-                try
-                {
-                    using var searcher = new ManagementObjectSearcher("root\\CIMV2",
-                        "SELECT AdapterRAM FROM Win32_VideoController");
-                    foreach (ManagementObject mo in searcher.Get())
-                    {
-                        if (mo["AdapterRAM"] is uint ram && ram > 0)
-                        {
-                            totalBytes = ram;
-                            break;
-                        }
-                    }
-                }
-                catch { }
-            }
-
-            return (usedBytes, totalBytes);
-        }
-
-
-        public double? GetNvidiaGpuPercent()
-        {
             try
             {
-                var proc = new Process
+                using var searcher = new ManagementObjectSearcher("root\\CIMV2",
+                    "SELECT AdapterRAM FROM Win32_VideoController");
+                var capacities = new List<ulong>();
+                foreach (ManagementObject mo in searcher.Get())
                 {
-                    StartInfo = new ProcessStartInfo
+                    if (mo["AdapterRAM"] is uint ram && ram > 0)
                     {
-                        FileName = @"C:\Windows\System32\nvidia-smi.exe",
-                        Arguments = "--query-gpu=utilization.gpu --format=csv,noheader,nounits",
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        CreateNoWindow = true
+                        capacities.Add(ram);
                     }
-                };
-                proc.Start();
-                string output = proc.StandardOutput.ReadToEnd();
-                proc.WaitForExit();
-                
-                if (double.TryParse(output.Trim(), out var percent))
-                {
-                    return percent;
                 }
+
+                readings = readings with { TotalBytes = capacities };
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Failed to get NVIDIA GPU percent: {ex.Message}");
+                DiagnosticLog.Shared.Warning(
+                    BackendName,
+                    "vram-total",
+                    "unavailable",
+                    elapsed: started.Elapsed,
+                    detail: DiagnosticDetail.Describe(ex));
             }
-            return null;
+
+            return GpuMemoryFallbackPolicy.Resolve(readings);
         }
 
-        public double? GetIntelGpuPercentBestEffort()
-        {
-            // 1) Try WMI class or Performance counters (best-effort)
-            try
-            {
-                // Try Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine
-                using var searcher = new ManagementObjectSearcher("root\\CIMV2", "SELECT * FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine");
-                var collection = searcher.Get();
-                var values = collection.Cast<ManagementObject>()
-                    .SelectMany(mo => new[] { TryGetDouble(mo, "UtilizationPercentage"), TryGetDouble(mo, "PercentGPUUtilization"), TryGetDouble(mo, "Utilization") })
-                    .Where(v => v.HasValue).Select(v => v!.Value).ToList();
-                if (values.Count > 0)
-                {
-                    return values.Average();
-                }
-            }
-            catch
-            {
-                // ignore WMI errors
-            }
-
-            // 3) Try PerformanceCounter category "GPU Engine" if available
-            try
-            {
-                // Instances like "pid_####_engtype_3D" expose "Utilization Percentage" or "% Utilization"
-                // Aggregate across instances
-                double sum = 0;
-                int count = 0;
-                var catNames = new[] { "GPU Engine", "GPU" };
-                foreach (var cat in catNames)
-                {
-                    try
-                    {
-                        if (!PerformanceCounterCategory.Exists(cat)) continue;
-                        var pcc = new PerformanceCounterCategory(cat);
-                        var instances = pcc.GetInstanceNames();
-                        foreach (var inst in instances)
-                        {
-                            try
-                            {
-                                using var pc = new PerformanceCounter(cat, "Utilization Percentage", inst, readOnly: true);
-                                var val = pc.NextValue();
-                                if (!double.IsNaN(val) && !double.IsInfinity(val))
-                                { sum += val; count++; }
-                            }
-                            catch { }
-                        }
-                        if (count > 0) return sum / count;
-                    }
-                    catch { }
-                }
-            }
-            catch { }
-
-            // Nothing available
-            return null;
-        }
-
-        private static double? TryGetDouble(ManagementObject mo, string prop)
-        {
-            try
-            {
-                if (mo[prop] != null && double.TryParse(mo[prop].ToString(), out var v))
-                    return v;
-            }
-            catch { }
-            return null;
-        }
-
-        private double? GetNvidiaGpuTemperature()
-        {
-            try
-            {
-                var proc = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = @"C:\Windows\System32\nvidia-smi.exe",
-                        Arguments = "--query-gpu=temperature.gpu --format=csv,noheader,nounits",
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        CreateNoWindow = true
-                    }
-                };
-                proc.Start();
-                string output = proc.StandardOutput.ReadToEnd();
-                proc.WaitForExit();
-
-                if (double.TryParse(output.Trim(), out var temp))
-                    return temp;
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Failed to get NVIDIA GPU temperature: {ex.Message}");
-            }
-            return null;
-        }
-
-        private double? GetIntelGpuTemperatureBestEffort()
-        {
-            // ACPI MSAcpi_ThermalZoneTemperature zones are not GPU-specific.
-            // Do not present unidentified sensor readings as GPU temperature.
-            // Return null so only confirmed GPU sensors (e.g. NVIDIA via nvidia-smi)
-            // are reported as GPU temperature.
-            return null;
-        }
     }
 }

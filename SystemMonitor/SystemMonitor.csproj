@@ -6,10 +6,27 @@
     <TargetPlatformMinVersion>10.0.22000.0</TargetPlatformMinVersion>
     <RootNamespace>System_Monitor</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AppxManifest>Package.appxmanifest</AppxManifest>
+    <!--
+      The manifest lives in a nested folder relative to this project file.
+      The path below is relative to the project directory, so it must
+      include the nested folder name. It previously read
+      "Package.appxmanifest", which resolved to a file that does not exist
+      and had never existed in this repository's history.
+    -->
+    <AppxManifest>SystemMonitor\Package.appxmanifest</AppxManifest>
+    <!--
+      The architectures this project is built and published for. All three
+      are build-tested; see docs/build-and-package.md for the exact
+      commands and for which parts of the matrix are Windows-only.
+    -->
     <Platforms>x86;x64;ARM64</Platforms>
-    <RuntimeIdentifiers>win-x86;win-x64</RuntimeIdentifiers>
-    <PublishProfile>win-$(Platform).pubxml</PublishProfile>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <!--
+      Only resolve a publish profile when the platform actually names one.
+      The default AnyCPU platform has no profile, and asking for
+      "win-AnyCPU.pubxml" produced a NETSDK1198 warning on every publish.
+    -->
+    <PublishProfile Condition="'$(Platform)' != 'AnyCPU'">win-$(Platform).pubxml</PublishProfile>
     <UseWinUI>false</UseWinUI>
     <EnableMsixTooling>false</EnableMsixTooling>
     <WindowsPackageType>None</WindowsPackageType>
@@ -31,7 +48,7 @@
 
   <ItemGroup>
     <Manifest Include="$(ApplicationManifest)" />
-    <AppxManifestFile Include="Package.appxmanifest" />
+    <AppxManifestFile Include="SystemMonitor\Package.appxmanifest" />
   </ItemGroup>
 
   <!--
@@ -87,6 +104,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Remove="Package.appxmanifest" />
+    <None Remove="SystemMonitor\Package.appxmanifest" />
   </ItemGroup>
 </Project>

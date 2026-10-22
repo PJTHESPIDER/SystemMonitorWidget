@@ -4,6 +4,10 @@ A Windows 11 widget that puts live system metrics on your Widgets board.
 
 Status: Active development. This project is a prototype and not yet an official release. The packaging identity and signing setup are still placeholders for development use.
 
+# Building
+
+See [docs/build-and-package.md](docs/build-and-package.md) for the build, test, package and install steps from a clean checkout, and for the opt-in diagnostics.
+
 # Features
 
 CPU — utilization and clock speed

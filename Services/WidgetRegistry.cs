@@ -27,6 +27,25 @@ namespace System_Monitor.Services
         public TSize Size { get; init; }
 
         public bool IsActive { get; init; }
+
+        /// <summary>
+        /// The GPU this widget presents, as the device's per-instance
+        /// identity.
+        ///
+        /// <para>
+        /// This is a device identity, never an enumeration index: the
+        /// enumeration index shifts whenever the device set changes, so a
+        /// selection stored against it would silently start pointing at a
+        /// different card. The per-instance identity (the Windows PNP device
+        /// id) names one specific adapter and stays valid across reboots.
+        /// </para>
+        ///
+        /// <para>
+        /// Null means "no device was selected", in which case the documented
+        /// default policy chooses the device.
+        /// </para>
+        /// </summary>
+        public string? SelectedGpuInstanceId { get; init; }
     }
 
     /// <summary>
@@ -137,8 +156,45 @@ namespace System_Monitor.Services
         }
 
         /// <summary>
-        /// A snapshot of the currently active widgets.
+        /// Updates the selected GPU of an existing widget. Returns false when
+        /// the widget is not registered.
         ///
+        /// <para>
+        /// The value is the device's per-instance identity. Passing null
+        /// clears the selection, which returns the widget to the default
+        /// selection policy.
+        /// </para>
+        ///
+        /// <para>
+        /// The entry is replaced atomically, so a reader never observes a
+        /// partially updated state.
+        /// </para>
+        /// </summary>
+        public bool TrySetSelectedGpu(string widgetId, string? instanceId)
+        {
+            if (string.IsNullOrEmpty(widgetId))
+                return false;
+
+            var normalized = string.IsNullOrWhiteSpace(instanceId) ? null : instanceId.Trim();
+
+            while (true)
+            {
+                if (!_entries.TryGetValue(widgetId, out var existing) || existing is null)
+                    return false;
+
+                if (string.Equals(existing.SelectedGpuInstanceId, normalized, StringComparison.Ordinal))
+                    return true;
+
+                var updated = existing with { SelectedGpuInstanceId = normalized };
+
+                if (_entries.TryUpdate(widgetId, updated, existing))
+                    return true;
+            }
+        }
+
+        /// <summary>
+        /// A snapshot of the currently active widgets.
+        /// </new_string>
         /// The returned list is a private copy, and each entry is immutable,
         /// so the caller can iterate it while widgets are being activated or
         /// deactivated without any locking.

@@ -37,14 +37,72 @@
     <Compile Include="../Services/ThermalMath.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/NetworkDeltaCalculator.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/NetworkInterfacePolicy.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/ThermalZoneReading.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/LegacyPayloadPresenter.cs" Link="Services/%(Filename)%(Extension)" />
+    <!--
+      The diagnostic subsystem. It is pure logic over a TimeProvider and an
+      injectable sink, so the rate limiting, the scrubbing and the
+      availability explanations can all be tested without touching the
+      hardware or the filesystem.
+    -->
+    <Compile Include="../Services/ByteFormatter.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/Diagnostics.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/SensorAvailability.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/DiagnosticInventory.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/DiagnosticHost.cs" Link="Services/%(Filename)%(Extension)" />
+    <!--
+      The manufacturer-neutral widget payload. The presenter, the selection
+      policy, the payload container and the templates are pure logic: they
+      format an immutable snapshot and bind it to a template, and they never
+      touch the widget host or the hardware. The templates use the project's
+      own WidgetLayoutSize enum rather than the Windows App SDK's
+      WidgetSize, so the real templates can be linked and asserted on
+      directly.
+    -->
+    <Compile Include="../Services/GpuSelectionPolicy.cs" Link="Services/%(Filename)%(Extension)" />
+    <!--
+      The policies that decide whether an unattributed reading may be
+      presented, and whether a failed read may be presented as a value.
+      Both are pure decisions, so they are exercised directly.
+    -->
+    <Compile Include="../Services/GpuMemoryFallbackPolicy.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/GpuMemoryCompatibilityPolicy.cs" Link="Services/%(Filename)%(Extension)" />
+    <!--
+      The GPU-memory presentation. It resolves a memory figure and the
+      heading it is shown under together, so the heading cannot claim a
+      memory pool the reading did not establish. It is pure formatting
+      over a measurement, so it is exercised directly.
+    -->
+    <Compile Include="../Services/GpuMemoryPresentation.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/ScalarCollectorState.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/ScalarCandidate.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/ScalarMergePolicy.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/WidgetLayoutSize.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/WidgetPayload.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/WidgetPayloadPresenter.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/WidgetTemplates.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/LhmSensorSelection.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/LhmSensorSource.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/LhmSnapshotMapper.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/IMetricsCollector.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/UpdatePipeline.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/WidgetRegistry.cs" Link="Services/%(Filename)%(Extension)" />
+    <!--
+      The NVIDIA command-line fallback. These files are pure and take their
+      process execution through the injectable IProcessRunner, so they can be
+      tested with a fake runner and no NVIDIA driver. The real runner
+      (SystemProcessRunner) is also linked; it is only exercised indirectly,
+      and the fallback tests never invoke it.
+    -->
+    <Compile Include="../Services/IProcessRunner.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaGpuSample.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaSmiParser.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaGpuIdentity.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaGpuReconciler.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaGpuFallbackSelector.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaGpuFallbackPolicy.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaGpuFallback.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaSmiLocator.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/SystemProcessRunner.cs" Link="Services/%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

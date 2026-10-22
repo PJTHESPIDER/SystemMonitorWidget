@@ -141,12 +141,21 @@ namespace System_Monitor.Services
 
             if (result.TimedOut)
             {
+                // A child that could not be terminated is still running.
+                // The collector runs once per cycle, so a surviving child
+                // would accumulate one process per cycle. It is reported
+                // separately from the timeout itself, because the timeout
+                // is expected behaviour and the survivor is not.
+                var detail = result.ChildTerminated
+                    ? $"limit={_timeout.TotalSeconds:F0}s"
+                    : $"limit={_timeout.TotalSeconds:F0}s child-not-terminated";
+
                 DiagnosticLog.Shared.Error(
                     BackendName,
                     "query",
                     "timeout",
                     elapsed: elapsed,
-                    detail: $"limit={_timeout.TotalSeconds:F0}s");
+                    detail: detail);
                 return Array.Empty<NvidiaGpuSample>();
             }
 

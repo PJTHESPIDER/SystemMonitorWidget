@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using System_Monitor.Models;
@@ -752,7 +751,11 @@ namespace System_Monitor.Services
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"Update cycle failed: {ex.Message}");
+                        DiagnosticLog.Shared.Error(
+                            "pipeline",
+                            "cycle",
+                            "failed",
+                            detail: DiagnosticDetail.Describe(ex));
                     }
                     finally
                     {
@@ -929,9 +932,13 @@ namespace System_Monitor.Services
             }
             catch (Exception ex)
             {
-                // Ordinary collector failure: log it and let the next cycle
-                // run.
-                Debug.WriteLine($"Collection failed: {ex.Message}");
+                // Ordinary collector failure: report it and let the next
+                // cycle run.
+                DiagnosticLog.Shared.Error(
+                    "pipeline",
+                    "collect",
+                    "failed",
+                    detail: DiagnosticDetail.Describe(ex));
                 return;
             }
 
@@ -954,7 +961,11 @@ namespace System_Monitor.Services
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Payload building failed: {ex.Message}");
+                DiagnosticLog.Shared.Error(
+                    "pipeline",
+                    "build-payload",
+                    "failed",
+                    detail: DiagnosticDetail.Describe(ex));
                 return;
             }
 
@@ -986,8 +997,14 @@ namespace System_Monitor.Services
                 catch (Exception ex)
                 {
                     // One widget's failure does not prevent publishing to
-                    // the others.
-                    Debug.WriteLine($"Publish to widget {widget.WidgetId} failed: {ex.Message}");
+                    // the others. The widget's id is not logged: it is
+                    // assigned by the host and identifies one instance of
+                    // this widget on this machine.
+                    DiagnosticLog.Shared.Error(
+                        "pipeline",
+                        "publish",
+                        "failed",
+                        detail: DiagnosticDetail.Describe(ex));
                 }
             }
 

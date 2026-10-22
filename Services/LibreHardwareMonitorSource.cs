@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
 using LibreHardwareMonitor.Hardware;
+using LibreHardwareMonitor.Hardware.Gpu;
 
 namespace System_Monitor.Services
 {
@@ -28,7 +27,13 @@ namespace System_Monitor.Services
     /// </summary>
     public sealed class LibreHardwareMonitorSource : ILhmSensorSource
     {
+        /// <summary>
+        /// The backend name used in the diagnostic log.
+        /// </summary>
+        public const string BackendName = "LHM";
+
         private readonly object _lock = new();
+        private readonly TimeProvider _timeProvider;
         private Computer? _computer;
         private bool _initialized;
         private bool _disposed;
@@ -38,7 +43,17 @@ namespace System_Monitor.Services
         public string? UnavailableReason { get; private set; }
 
         public LibreHardwareMonitorSource()
+            : this(null)
         {
+        }
+
+        /// <summary>
+        /// Creates the source with an explicit clock, so the elapsed times
+        /// in the log can be controlled in tests.
+        /// </summary>
+        public LibreHardwareMonitorSource(TimeProvider? timeProvider)
+        {
+            _timeProvider = timeProvider ?? TimeProvider.System;
         }
 
         /// <summary>
@@ -58,6 +73,8 @@ namespace System_Monitor.Services
                 if (!EnsureInitialized())
                     return devices;
 
+                var started = _timeProvider.GetUtcNow();
+
                 try
                 {
                     foreach (var hardware in _computer!.Hardware)
@@ -68,10 +85,22 @@ namespace System_Monitor.Services
                         if (descriptor is not null)
                             devices.Add(descriptor);
                     }
+
+                    DiagnosticLog.Shared.Info(
+                        BackendName,
+                        "read",
+                        "ok",
+                        elapsed: _timeProvider.GetUtcNow() - started,
+                        detail: $"devices={devices.Count}");
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"LibreHardwareMonitor read failed: {ex.Message}");
+                    DiagnosticLog.Shared.Error(
+                        BackendName,
+                        "read",
+                        "failed",
+                        elapsed: _timeProvider.GetUtcNow() - started,
+                        detail: DiagnosticDetail.Describe(ex));
                 }
             }
 
@@ -89,6 +118,8 @@ namespace System_Monitor.Services
                 return IsAvailable;
 
             _initialized = true;
+
+            var started = _timeProvider.GetUtcNow();
 
             try
             {
@@ -114,12 +145,24 @@ namespace System_Monitor.Services
                 _computer = computer;
                 IsAvailable = true;
                 UnavailableReason = null;
+
+                DiagnosticLog.Shared.Info(
+                    BackendName,
+                    "initialize",
+                    "ok",
+                    elapsed: _timeProvider.GetUtcNow() - started);
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"LibreHardwareMonitor initialization failed: {ex.Message}");
                 IsAvailable = false;
                 UnavailableReason = ex.Message;
+
+                DiagnosticLog.Shared.Error(
+                    BackendName,
+                    "initialize",
+                    "failed",
+                    elapsed: _timeProvider.GetUtcNow() - started,
+                    detail: DiagnosticDetail.Describe(ex));
             }
 
             return IsAvailable;
@@ -138,7 +181,14 @@ namespace System_Monitor.Services
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"LibreHardwareMonitor update failed for {hardware.Name}: {ex.Message}");
+                // The device's name is not logged: a routine log describes
+                // the backend's behaviour, not the machine's inventory. The
+                // hardware type is enough to tell a CPU from a GPU.
+                DiagnosticLog.Shared.Warning(
+                    BackendName,
+                    "update",
+                    "failed",
+                    detail: $"type={hardware.HardwareType} {DiagnosticDetail.Describe(ex)}");
             }
 
             foreach (var sub in hardware.SubHardware)
@@ -173,8 +223,100 @@ namespace System_Monitor.Services
                 Vendor = DeriveVendor(hardwareType, identifier),
                 IsCpu = isCpu,
                 IsIntegratedGpu = isGpu ? DeriveIntegration(hardwareType, identifier) : null,
+                PciDeviceKey = isGpu ? ReadPciDeviceKey(hardware) : null,
+                InstanceId = isGpu ? ReadInstanceId(hardware) : null,
                 Sensors = sensors,
             };
+        }
+
+        /// <summary>
+        /// Reads the device's per-instance identity — the identifier the
+        /// platform assigns to one specific adapter.
+        ///
+        /// <para>
+        /// For GPUs the library exposes it as <see cref="GenericGpu.DeviceId"/>:
+        /// the D3D adapter's actual device identifier (NVIDIA and Intel), or
+        /// the adapter's PNP string (AMD). It identifies the individual card,
+        /// so two identical cards have different values, and it does not
+        /// change when the device set is re-enumerated.
+        /// </para>
+        ///
+        /// <para>
+        /// That makes it the right identity to persist a user selection
+        /// against. <see cref="IHardware.Identifier"/> cannot be used for
+        /// that: it is an enumeration index ("/gpu-nvidia/0") whose numeric
+        /// suffix shifts whenever the device set changes.
+        /// </para>
+        ///
+        /// <para>
+        /// The value is read defensively. A backend that cannot supply one
+        /// yields null, and the caller then falls back to the default
+        /// selection policy rather than persisting something it cannot
+        /// resolve later.
+        /// </para>
+        /// </summary>
+        private static string? ReadInstanceId(IHardware hardware)
+        {
+            if (hardware is not GenericGpu gpu)
+                return null;
+
+            string? deviceId;
+            try
+            {
+                deviceId = gpu.DeviceId;
+            }
+            catch (Exception ex)
+            {
+                DiagnosticLog.Shared.Warning(
+                    BackendName,
+                    "read-instance-id",
+                    "failed",
+                    detail: DiagnosticDetail.Describe(ex));
+                return null;
+            }
+
+            return string.IsNullOrWhiteSpace(deviceId) ? null : deviceId.Trim();
+        }
+
+        /// <summary>
+        /// Reads the device's PCI vendor and device id, in the canonical
+        /// "VEN_xxxx&amp;DEV_yyyy" form.
+        ///
+        /// <see cref="IHardware.Identifier"/> is an enumeration index
+        /// ("/gpu-nvidia/0"), which says nothing about which physical card
+        /// was measured. The GPU's own device id is the Windows PNP device
+        /// id ("PCI\VEN_10DE&amp;DEV_1E91&amp;..."), which does. It is what
+        /// lets a reading from a vendor command-line tool be attributed to
+        /// this device rather than to whichever card happened to be first.
+        ///
+        /// The property is on the library's GPU base type rather than on
+        /// <see cref="IHardware"/>, so it is read through a down-cast. When
+        /// the cast is not possible, or the id does not carry both parts, the
+        /// result is null: the device simply cannot be reconciled, which is
+        /// preferable to reconciling it wrongly.
+        /// </summary>
+        private static string? ReadPciDeviceKey(IHardware hardware)
+        {
+            if (hardware is not GenericGpu gpu)
+                return null;
+
+            string? deviceId;
+            try
+            {
+                deviceId = gpu.DeviceId;
+            }
+            catch (Exception ex)
+            {
+                DiagnosticLog.Shared.Warning(
+                    BackendName,
+                    "read-pci-device-id",
+                    "failed",
+                    detail: DiagnosticDetail.Describe(ex));
+                return null;
+            }
+
+            var key = NvidiaGpuIdentity.ExtractPciDeviceKey(deviceId);
+            return string.IsNullOrEmpty(key) ? null : key;
         }
 
         /// <summary>
@@ -294,7 +436,11 @@ namespace System_Monitor.Services
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"LibreHardwareMonitor close failed: {ex.Message}");
+                    DiagnosticLog.Shared.Warning(
+                        BackendName,
+                        "close",
+                        "failed",
+                        detail: DiagnosticDetail.Describe(ex));
                 }
                 finally
                 {

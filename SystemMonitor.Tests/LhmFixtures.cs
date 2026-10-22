@@ -91,6 +91,8 @@ internal static class LhmFixtures
         Vendor = "NVIDIA",
         IsCpu = false,
         IsIntegratedGpu = null,
+        PciDeviceKey = "VEN_10DE&DEV_1E91",
+        InstanceId = @"PCI\VEN_10DE&DEV_1E91&SUBSYS_14581458\4&7AADB68&0&0008",
         Sensors = new List<LhmSensorDescriptor>
         {
             Temp("GPU Core", readable ? 61.0 : null),
@@ -119,6 +121,8 @@ internal static class LhmFixtures
         Vendor = "AMD",
         IsCpu = false,
         IsIntegratedGpu = null,
+        PciDeviceKey = "VEN_1002&DEV_73BF",
+        InstanceId = @"PCI\VEN_1002&DEV_73BF&SUBSYS_164818F0\4&2A1B4C5&0&0008",
         Sensors = new List<LhmSensorDescriptor>
         {
             Temp("GPU Core", readable ? 55.0 : null),
@@ -143,6 +147,8 @@ internal static class LhmFixtures
         Vendor = "Intel",
         IsCpu = false,
         IsIntegratedGpu = true,
+        PciDeviceKey = "VEN_8086&DEV_9BC4",
+        InstanceId = @"PCI\VEN_8086&DEV_9BC4&SUBSYS_1A2117AA\4&2E1B0C4&0&0008",
         Sensors = new List<LhmSensorDescriptor>
         {
             Load("D3D 3D", readable ? 7.0 : null),
@@ -164,6 +170,8 @@ internal static class LhmFixtures
         Vendor = "Intel",
         IsCpu = false,
         IsIntegratedGpu = false,
+        PciDeviceKey = "VEN_8086&DEV_56A0",
+        InstanceId = @"PCI\VEN_8086&DEV_56A0&SUBSYS_123418DA\4&1F2A3B4&0&0008",
         Sensors = new List<LhmSensorDescriptor>(),
     };
 

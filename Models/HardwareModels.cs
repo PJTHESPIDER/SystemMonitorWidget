@@ -59,14 +59,30 @@ namespace System_Monitor.Models
         /// <summary>
         /// Creates an Available measurement.
         /// </summary>
-        public static Measurement AvailableValue(double? value, string? unit = null, string? source = null) =>
+        /// <param name="value">The value that was read.</param>
+        /// <param name="unit">The canonical unit of the metric.</param>
+        /// <param name="source">The provenance of the reading.</param>
+        /// <param name="readAt">
+        /// The time the value was read. It defaults to now, which is right
+        /// only when the value was read at the moment the measurement is
+        /// built. A value that was read earlier — and is being published
+        /// now — must be stamped with the time of the read, or the widget
+        /// will show it as having been updated just now.
+        /// </param>
+        public static Measurement AvailableValue(
+            double? value,
+            string? unit = null,
+            string? source = null,
+            DateTimeOffset? readAt = null) =>
             new()
             {
                 Value = value,
                 Unit = unit,
                 Source = source,
                 Status = MeasurementStatus.Available,
-                LastSuccessfulUpdate = value.HasValue ? DateTimeOffset.UtcNow : null,
+                LastSuccessfulUpdate = value.HasValue
+                    ? readAt ?? DateTimeOffset.UtcNow
+                    : null,
             };
 
         /// <summary>
@@ -112,6 +128,57 @@ namespace System_Monitor.Models
         /// Only meaningful for GPUs.
         /// </summary>
         public GpuIntegration GpuIntegration { get; init; } = GpuIntegration.Unknown;
+
+        /// <summary>
+        /// The device's PCI vendor and device id, in the canonical
+        /// "VEN_xxxx&amp;DEV_yyyy" form, or null when the backend does not
+        /// expose it.
+        ///
+        /// This is the key that lets a reading from a vendor command-line
+        /// tool be attributed to this specific device. It identifies a device
+        /// *model*, not an individual card: two identical cards share it.
+        /// </summary>
+        public string? PciDeviceKey { get; init; }
+
+        /// <summary>
+        /// The device's per-instance identity, suitable for persisting a
+        /// user selection across sessions, or null when the backend does not
+        /// expose one.
+        ///
+        /// <para>
+        /// This is deliberately distinct from the other two identities on
+        /// this type:
+        /// </para>
+        ///
+        /// <list type="bullet">
+        /// <item><description>
+        /// <see cref="DeviceId"/> is the backend's own identifier, which for
+        /// LibreHardwareMonitor is an <i>enumeration index</i>
+        /// ("/gpu-nvidia/0"). It is stable within a session but says
+        /// nothing about which physical card was measured, and its numeric
+        /// suffix shifts when the device set changes. It is therefore never
+        /// persisted.
+        /// </description></item>
+        /// <item><description>
+        /// <see cref="PciDeviceKey"/> identifies a device <i>model</i>. Two
+        /// identical cards share it, so it cannot distinguish them either.
+        /// </description></item>
+        /// <item><description>
+        /// This property identifies the individual device: it is the
+        /// Windows PNP device id (or an equivalent per-adapter identifier)
+        /// that the platform assigns to that one card. Two identical cards
+        /// have different values, and the value does not change when the
+        /// device set is re-enumerated.
+        /// </description></item>
+        /// </list>
+        ///
+        /// <para>
+        /// A user selection is persisted against this value. When a selected
+        /// device is absent, the selection simply does not resolve, and the
+        /// caller falls back to the documented default policy.
+        /// </para>
+        /// </summary>
+        public string? InstanceId { get; init; }
     }
 
     /// <summary>
@@ -173,7 +240,11 @@ namespace System_Monitor.Models
             Measurement? gpuTemperatureC = null,
             Measurement? gpuVramUsedBytes = null,
             Measurement? gpuVramTotalBytes = null,
-            Measurement? acpiThermalZoneTemperatureC = null) =>
+            Measurement? acpiThermalZoneTemperatureC = null,
+            string? gpuLoadDeviceId = null,
+            string? gpuTemperatureDeviceId = null,
+            string? gpuVramUsedDeviceId = null,
+            string? gpuVramTotalDeviceId = null) =>
             new()
             {
                 Timestamp = timestamp,
@@ -196,6 +267,10 @@ namespace System_Monitor.Models
                 GpuVramUsedBytes = gpuVramUsedBytes,
                 GpuVramTotalBytes = gpuVramTotalBytes,
                 AcpiThermalZoneTemperatureC = acpiThermalZoneTemperatureC,
+                GpuLoadDeviceId = gpuLoadDeviceId,
+                GpuTemperatureDeviceId = gpuTemperatureDeviceId,
+                GpuVramUsedDeviceId = gpuVramUsedDeviceId,
+                GpuVramTotalDeviceId = gpuVramTotalDeviceId,
             };
 
         /// <summary>System-level RAM measurement (not tied to a single device).</summary>
@@ -230,6 +305,51 @@ namespace System_Monitor.Models
 
         /// <summary>CPU temperature, from the device-identified backend when readable.</summary>
         public Measurement? CpuTemperatureC { get; init; }
+
+        /// <summary>
+        /// The device the scalar GPU load figure describes, or null when
+        /// the collection could not attribute it to a device.
+        ///
+        /// <para>
+        /// The scalar GPU figures are per-device readings that have been
+        /// flattened into single values. These properties name the device
+        /// each one came from, so a presenter can check that it is about to
+        /// present a figure for the same device. Without them, a fallback
+        /// figure could be shown under another card's name.
+        /// </para>
+        ///
+        /// <para>
+        /// The device id is the backend's own, matching
+        /// <see cref="HardwareDevice.DeviceId"/>.
+        /// </para>
+        /// </summary>
+        public string? GpuLoadDeviceId { get; init; }
+
+        /// <summary>
+        /// The device the scalar GPU temperature figure describes, or null
+        /// when it could not be attributed.
+        /// </summary>
+        public string? GpuTemperatureDeviceId { get; init; }
+
+        /// <summary>
+        /// The device the scalar GPU <i>used</i> memory figure describes, or
+        /// null when it could not be attributed.
+        /// </summary>
+        public string? GpuVramUsedDeviceId { get; init; }
+
+        /// <summary>
+        /// The device the scalar GPU <i>total</i> memory figure describes, or
+        /// null when it could not be attributed.
+        ///
+        /// <para>
+        /// The used and total figures are tracked separately because they can
+        /// come from different sources: the used figure may come from the
+        /// reconciled NVIDIA fallback while the capacity comes from the
+        /// Windows counters, which name no device at all. Attributing them
+        /// together would let one card's capacity be presented as another's.
+        /// </para>
+        /// </summary>
+        public string? GpuVramTotalDeviceId { get; init; }
 
         /// <summary>
         /// Load of the primary GPU, merged across the device-identified

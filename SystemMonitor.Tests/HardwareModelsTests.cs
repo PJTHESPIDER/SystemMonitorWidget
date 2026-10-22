@@ -177,9 +177,35 @@ public class HardwareModelsTests
         Assert.Equal("30.0%", payload["gpu"]);
         Assert.Equal("65.0°C", payload["gpuTemp"]);
         Assert.Contains("3.7 GB / 7.5 GB (50.0%)", payload["gpuVram"]);
-        Assert.Equal("N/A", payload["igpu"]);
-        Assert.Equal("30.0%", payload["dgpu"]);
         Assert.Equal("12:00:00 PM", payload["lastUpdated"]);
+
+        // The heading comes from the same resolver the production
+        // presenter uses, so the legacy contract cannot drift from it.
+        // These two figures are the card's own dedicated video memory, so
+        // the heading says so.
+        Assert.Equal(
+            GpuMemoryPresentation.DedicatedLabel,
+            payload["gpuVramLabel"]);
+    }
+
+    [Fact]
+    public void LegacyPayloadPresenter_LegacyIgpuDgpuKeysAreGone()
+    {
+        // The igpu/dgpu keys bucketed GPUs by integration class. They are
+        // gone, because they could not name either device and collapsed two
+        // different cards into one value. The manufacturer-neutral payload
+        // names the device it presents instead.
+        var snapshot = Snapshot(
+            gpus: new[]
+            {
+                Device("GPU0", "Intel UHD Graphics 630", "Intel", DeviceClass.Gpu, GpuIntegration.Integrated),
+                Device("GPU1", "NVIDIA GeForce RTX 3080", "NVIDIA", DeviceClass.Gpu, GpuIntegration.Discrete),
+            });
+
+        var payload = LegacyPayloadPresenter.Present(snapshot);
+
+        Assert.False(payload.ContainsKey("igpu"));
+        Assert.False(payload.ContainsKey("dgpu"));
     }
 
     [Fact]
@@ -215,10 +241,77 @@ public class HardwareModelsTests
     }
 
     [Fact]
+    public void LegacyPayloadPresenter_DoesNotBorrowAnotherDevicesReading()
+    {
+        // The presented device is the discrete card. The integrated card
+        // reported a temperature, but the discrete card did not. The
+        // temperature must not be borrowed: all four legacy GPU keys
+        // describe one device, and presenting another card's figure under
+        // this one's name would report it as the wrong hardware.
+        var integrated = Device("GPU-I", "Intel UHD Graphics 630", "Intel", DeviceClass.Gpu, GpuIntegration.Integrated);
+        var discrete = Device("GPU-D", "NVIDIA GeForce RTX 3080", "NVIDIA", DeviceClass.Gpu, GpuIntegration.Discrete);
+        var snapshot = Snapshot(
+            gpus: new[] { integrated, discrete },
+            readings: new[]
+            {
+                Reading("GPU-I", "LoadPercent", Available(5.0, "%", "LHM")),
+                Reading("GPU-I", "TemperatureC", Available(48.0, "°C", "LHM")),
+                Reading("GPU-D", "LoadPercent", Available(30.0, "%", "LHM")),
+            });
+
+        var payload = LegacyPayloadPresenter.Present(snapshot);
+
+        Assert.Equal("30.0%", payload["gpu"]);
+        Assert.Equal("N/A", payload["gpuTemp"]);
+        Assert.Equal("N/A", payload["gpuVram"]);
+    }
+
+    [Fact]
+    public void LegacyPayloadPresenter_DoesNotPairOneDeviceUsageWithAnotherDevicesCapacity()
+    {
+        // The discrete card reported its usage; the integrated card
+        // reported its capacity. Pairing them would produce a percentage
+        // no device reports.
+        var integrated = Device("GPU-I", "Intel UHD Graphics 630", "Intel", DeviceClass.Gpu, GpuIntegration.Integrated);
+        var discrete = Device("GPU-D", "NVIDIA GeForce RTX 3080", "NVIDIA", DeviceClass.Gpu, GpuIntegration.Discrete);
+        var snapshot = Snapshot(
+            gpus: new[] { integrated, discrete },
+            readings: new[]
+            {
+                Reading("GPU-I", "VramTotalBytes", Available(1_000_000_000.0, "bytes", "WMI")),
+                Reading("GPU-D", "VramUsedBytes", Available(4_000_000_000.0, "bytes", "LHM")),
+            });
+
+        var payload = LegacyPayloadPresenter.Present(snapshot);
+
+        // The used figure belongs to the presented device, so it is shown.
+        // The capacity does not, so no percentage is derived from it.
+        Assert.Equal("3.7 GB", payload["gpuVramUsed"]);
+        Assert.Equal("3.7 GB", payload["gpuVram"]);
+        Assert.DoesNotContain("%", payload["gpuVram"]);
+    }
+
+    [Fact]
     public void MetricsSnapshot_TimestampIsImmutable()
     {
         var ts = new DateTimeOffset(2026, 10, 19, 13, 30, 0, TimeSpan.Zero);
         var snapshot = new MetricsSnapshot { Timestamp = ts };
         Assert.Equal(ts, snapshot.Timestamp);
+    }
+
+    [Fact]
+    public void LegacyPayloadPresenter_ShowsTheAcpiThermalZoneAverage()
+    {
+        // The ACPI zone average is a scalar measurement, not a device
+        // reading. The legacy presenter must read the scalar field, or the
+        // key is always "N/A".
+        var snapshot = MetricsSnapshot.Create(
+            new DateTimeOffset(2026, 10, 19, 12, 0, 0, TimeSpan.Zero),
+            acpiThermalZoneTemperatureC: Measurement.AvailableValue(
+                41.5, "°C", "MSAcpi_ThermalZoneTemperature"));
+
+        var payload = LegacyPayloadPresenter.Present(snapshot);
+
+        Assert.Equal("41.5°C", payload["acpiThermalZoneTemp"]);
     }
 }

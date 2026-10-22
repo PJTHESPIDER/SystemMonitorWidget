@@ -201,6 +201,142 @@ namespace System_Monitor.Services
         };
 
         /// <summary>
+        /// The memory-sensor families that say the sensor describes the
+        /// card's own dedicated video memory.
+        ///
+        /// <para>
+        /// "GPU Memory" and "D3D Dedicated Memory" say so explicitly.
+        /// "VRAM" says so by definition. The bare "Memory" family does
+        /// not: a name that does not say which pool it describes
+        /// establishes nothing, and is deliberately left out.
+        /// </para>
+        /// </summary>
+        private static readonly string[] DedicatedMemoryFamilies =
+        {
+            "GPU Memory",
+            "D3D Dedicated Memory",
+            "VRAM",
+        };
+
+        /// <summary>
+        /// The one memory family whose name says nothing about which pool
+        /// it describes.
+        /// </summary>
+        private const string GenericMemoryFamily = "Memory";
+
+        /// <summary>
+        /// The qualifiers that turn a memory-sensor family into a used or
+        /// a total figure.
+        /// </summary>
+        private static readonly string[] MemorySensorQualifiers =
+        {
+            " Used",
+            " Total",
+        };
+
+        /// <summary>
+        /// True when the sensor name marks the sensor as describing shared
+        /// system memory rather than the card's own dedicated video memory.
+        ///
+        /// <para>
+        /// Shared system memory is not VRAM. The candidate lists exclude
+        /// it, so it is never <i>selected</i> as a memory metric — but a
+        /// figure that describes it may still arrive from elsewhere, and a
+        /// presenter has to be able to recognise one.
+        /// </para>
+        /// </summary>
+        /// <param name="sensorName">The sensor's name.</param>
+        public static bool IsSharedMemorySensor(string? sensorName) =>
+            !string.IsNullOrWhiteSpace(sensorName)
+            && sensorName.Contains("Shared", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The family a memory sensor name belongs to: the name with its
+        /// "Used" / "Total" qualifier removed.
+        ///
+        /// <para>
+        /// "GPU Memory Used" and "GPU Memory Total" are two figures of one
+        /// family; so are "Memory Used" and "Memory Total". The family is
+        /// what makes two figures comparable: a used figure and a total
+        /// figure from the same family describe the same pool of memory
+        /// whatever that pool is.
+        /// </para>
+        /// </summary>
+        /// <param name="sensorName">The sensor's name.</param>
+        /// <returns>The family name, or null when the name is empty.</returns>
+        public static string? MemoryFamilyOf(string? sensorName)
+        {
+            if (string.IsNullOrWhiteSpace(sensorName))
+                return null;
+
+            var name = sensorName.Trim();
+
+            foreach (var qualifier in MemorySensorQualifiers)
+            {
+                if (name.EndsWith(qualifier, StringComparison.OrdinalIgnoreCase))
+                {
+                    return name.Substring(0, name.Length - qualifier.Length).Trim();
+                }
+            }
+
+            return name;
+        }
+
+        /// <summary>
+        /// True when the sensor name is one of the dedicated-memory
+        /// candidates, and so describes the card's own video memory.
+        ///
+        /// <para>
+        /// The generic "Memory Used" / "Memory Total" names are <b>not</b>
+        /// in this list. A family that does not say which pool it
+        /// describes establishes nothing by itself: it may be a driver's
+        /// name for dedicated video memory on one card and for shared
+        /// system memory on another.
+        /// </para>
+        /// </summary>
+        /// <param name="sensorName">The sensor's name.</param>
+        public static bool IsDedicatedMemorySensor(string? sensorName)
+        {
+            if (string.IsNullOrWhiteSpace(sensorName))
+                return false;
+
+            if (IsSharedMemorySensor(sensorName))
+                return false;
+
+            var family = MemoryFamilyOf(sensorName);
+
+            return family is not null
+                && DedicatedMemoryFamilies.Any(
+                    f => string.Equals(f, family, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// True when the sensor name belongs to the generic memory family —
+        /// the plain "Memory Used" / "Memory Total" names.
+        ///
+        /// <para>
+        /// These names say nothing about which pool they describe, so they
+        /// are not dedicated memory and they are not shared memory either.
+        /// What they do establish is a family: two figures named from this
+        /// family describe one pool, whatever that pool is.
+        /// </para>
+        /// </summary>
+        /// <param name="sensorName">The sensor's name.</param>
+        public static bool IsGenericMemorySensor(string? sensorName)
+        {
+            if (string.IsNullOrWhiteSpace(sensorName))
+                return false;
+
+            if (IsSharedMemorySensor(sensorName))
+                return false;
+
+            var family = MemoryFamilyOf(sensorName);
+
+            return family is not null
+                && string.Equals(family, GenericMemoryFamily, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// Selects the sensor supplying <paramref name="kind"/>.
         /// </summary>
         /// <param name="sensors">All sensors exposed by the device.</param>

@@ -25,6 +25,27 @@ namespace System_Monitor.Services
         /// <summary>True when the backend can state the GPU is integrated with the CPU.</summary>
         public bool? IsIntegratedGpu { get; init; }
 
+        /// <summary>
+        /// The device's PCI vendor and device id, in the canonical
+        /// "VEN_xxxx&amp;DEV_yyyy" form, or null when the backend does not
+        /// expose it.
+        ///
+        /// This is the key used to reconcile a reading from a vendor
+        /// command-line tool against this device.
+        /// </summary>
+        public string? PciDeviceKey { get; init; }
+
+        /// <summary>
+        /// The device's per-instance identity, suitable for persisting a
+        /// user selection, or null when the backend does not expose one.
+        ///
+        /// This is the platform-assigned identifier of one specific piece of
+        /// hardware. It is distinct from <see cref="DeviceId"/>, which is an
+        /// enumeration index, and from <see cref="PciDeviceKey"/>, which
+        /// identifies a model that two identical cards share.
+        /// </summary>
+        public string? InstanceId { get; init; }
+
         public IReadOnlyList<LhmSensorDescriptor> Sensors { get; init; } =
             Array.Empty<LhmSensorDescriptor>();
     }
