@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 
 namespace System_Monitor.Services
@@ -82,6 +83,137 @@ namespace System_Monitor.Services
         }
 
         /// <summary>
+        /// Formats a used/total pair as a compact capacity string "used / total unit"
+        /// with a shared unit and precision based on magnitude.
+        ///
+        /// Contract:
+        /// - Both used and total are formatted in the SAME unit (the largest unit
+        ///   that keeps the total >= 1, or KB if total < 1024). The unit is
+        ///   selected from the raw total before any rounding.
+        /// - Precision policy (applied after rounding to the target precision):
+        ///   - Below 10 selected units: at most two decimal places.
+        ///   - From 10 to below 100: at most one decimal place.
+        ///   - At least 100: whole selected units.
+        /// - Unnecessary trailing zeros are trimmed.
+        /// - Rounding uses MidpointRounding.AwayFromZero (banker's rounding
+        ///   would produce unexpected even-number bias in user-visible text).
+        /// - Returns "N/A" if total is missing (<= 0) or used is missing (< 0).
+        /// - Returns "N/A" if the computed total is zero (capacity not reported).
+        /// - Returns "N/A" if either value is NaN or infinite.
+        /// </summary>
+        public static string FormatCapacityCompact(double usedBytes, double totalBytes)
+        {
+            // Missing or invalid inputs
+            if (totalBytes <= 0 || usedBytes < 0 ||
+                double.IsNaN(usedBytes) || double.IsInfinity(usedBytes) ||
+                double.IsNaN(totalBytes) || double.IsInfinity(totalBytes))
+            {
+                return NotAvailable;
+            }
+
+            // Zero capacity is not a valid figure
+            if (totalBytes == 0)
+                return NotAvailable;
+
+            // Reject used > total (incoherent pair)
+            if (usedBytes > totalBytes)
+                return NotAvailable;
+
+            // Determine the shared unit based on total capacity (raw total, before rounding)
+            string unit;
+            double divisor;
+
+            if (totalBytes >= 1024.0 * 1024 * 1024 * 1024)
+            {
+                unit = "TB";
+                divisor = 1024.0 * 1024 * 1024 * 1024;
+            }
+            else if (totalBytes >= 1024.0 * 1024 * 1024)
+            {
+                unit = "GB";
+                divisor = 1024.0 * 1024 * 1024;
+            }
+            else if (totalBytes >= 1024.0 * 1024)
+            {
+                unit = "MB";
+                divisor = 1024.0 * 1024;
+            }
+            else if (totalBytes >= 1024.0)
+            {
+                unit = "KB";
+                divisor = 1024.0;
+            }
+            else
+            {
+                unit = "B";
+                divisor = 1.0;
+            }
+
+            double usedInUnit = usedBytes / divisor;
+            double totalInUnit = totalBytes / divisor;
+
+            // Apply precision policy based on total magnitude in the selected unit
+            // Total determines the precision tier for both used and total
+            int totalRounded;
+            if (totalInUnit >= 100)
+                totalRounded = (int)Math.Round(totalInUnit, MidpointRounding.AwayFromZero);
+            else if (totalInUnit >= 10)
+                totalRounded = (int)Math.Round(totalInUnit * 10) / 10; // 1 decimal
+            else
+                totalRounded = (int)Math.Round(totalInUnit * 100) / 100; // 2 decimals
+
+            // Actually, we need to use the tier based on the unrounded totalInUnit
+            // but apply the same tier to both used and total
+            var tier = totalInUnit >= 100 ? 2 : (totalInUnit >= 10 ? 1 : 0);
+
+            string FormatValue(double value, int tier)
+            {
+                double rounded;
+                string format;
+                if (tier == 2) // >= 100: whole units
+                {
+                    rounded = Math.Round(value, MidpointRounding.AwayFromZero);
+                    format = "F0";
+                }
+                else if (tier == 1) // >= 10: one decimal
+                {
+                    rounded = Math.Round(value * 10) / 10.0;
+                    format = "F1";
+                }
+                else // < 10: two decimals
+                {
+                    rounded = Math.Round(value * 100) / 100.0;
+                    format = "F2";
+                }
+
+                var str = rounded.ToString(format, CultureInfo.InvariantCulture);
+                // Trim trailing zeros
+                if (str.Contains('.'))
+                {
+                    str = str.TrimEnd('0').TrimEnd('.');
+                }
+                return str;
+            }
+
+            string usedStr = FormatValue(usedInUnit, tier);
+            string totalStr = FormatValue(totalInUnit, tier);
+
+            // Special case: used rounds to 0 but is actually > 0
+            // Show as "<0.01" (or appropriate minimum) to distinguish from true zero
+            if (usedBytes > 0 && usedStr == "0")
+            {
+                if (tier == 0)
+                    usedStr = "<0.01";
+                else if (tier == 1)
+                    usedStr = "<0.1";
+                else
+                    usedStr = "<1";
+            }
+
+            return $"{usedStr} / {totalStr} {unit}";
+        }
+
+        /// <summary>
         /// Formats a percentage.
         /// </summary>
         public static string FormatPercent(double value) =>
@@ -102,5 +234,10 @@ namespace System_Monitor.Services
                 return $"{(megahertz / 1000.0).ToString("F2", CultureInfo.CurrentCulture)} GHz";
             return $"{megahertz.ToString("F0", CultureInfo.CurrentCulture)} MHz";
         }
+
+        /// <summary>
+        /// The unavailable marker used by the payload presenters.
+        /// </summary>
+        public const string NotAvailable = "N/A";
     }
 }

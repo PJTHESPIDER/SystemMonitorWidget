@@ -145,7 +145,7 @@ public class WidgetLayoutFitTests
         // given a fixed share of a row that other figures also want.
         var template = WidgetTemplates.BuildTemplate(WidgetLayoutSize.Small);
 
-        Assert.Contains("\"text\": \"${gpuVramUsed}\"", template);
+        Assert.Contains("\"text\": \"${gpuMemoryCapacityCompact}\"", template);
     }
 
     // =====================================================================
@@ -193,8 +193,8 @@ public class WidgetLayoutFitTests
         // already used and what fits.
         var template = WidgetTemplates.BuildTemplate(WidgetLayoutSize.Medium);
 
-        Assert.Contains("\"text\": \"${diskCompact}\"", template);
-        Assert.Contains("\"text\": \"${ramCompact}\"", template);
+        Assert.Contains("\"text\": \"${diskCapacityCompact}\"", template);
+        Assert.Contains("\"text\": \"${ramCapacityCompact}\"", template);
     }
 
     [Fact]
@@ -205,7 +205,7 @@ public class WidgetLayoutFitTests
         // With the action row gone there is room for it again.
         var template = WidgetTemplates.BuildTemplate(WidgetLayoutSize.Small);
 
-        Assert.Contains("\"text\": \"${diskCompact}\"", template);
+        Assert.Contains("\"text\": \"${diskCapacityCompact}\"", template);
     }
 
     // =====================================================================
@@ -221,7 +221,7 @@ public class WidgetLayoutFitTests
         foreach (var block in BlocksOf(template))
         {
             if (block.Contains("\"${gpu}\"", StringComparison.Ordinal)
-                && block.Contains("\"${gpuVram}\"", StringComparison.Ordinal))
+                && block.Contains("\"${gpuMemoryCapacityCompact}\"", StringComparison.Ordinal))
             {
                 return block;
             }

@@ -457,7 +457,7 @@ public class GpuMemoryLabelTests
     // =====================================================================
 
     [Theory]
-    [InlineData(WidgetLayoutSize.Medium, "gpuVramLabel")]
+    [InlineData(WidgetLayoutSize.Medium, "gpuVramLabelCompact")]
     [InlineData(WidgetLayoutSize.Large, "gpuVramLabel")]
     public void EveryProductionSize_BindsAMemoryLabel(WidgetLayoutSize size, string expectedKey)
     {
@@ -470,6 +470,8 @@ public class GpuMemoryLabelTests
         // them. It shows the used-memory figure alone, which claims
         // nothing about the memory pool, so it needs no heading to keep
         // the claim honest.
+        //
+        // Medium uses the compact label, Large uses the full label.
         var template = WidgetTemplates.BuildTemplate(size);
 
         var referenced = TemplateBindings.ExtractPropertyNames(template);
@@ -508,7 +510,7 @@ public class GpuMemoryLabelTests
     }
 
     [Theory]
-    [InlineData(WidgetLayoutSize.Medium, "gpuVramLabel", "Dedicated GPU memory")]
+    [InlineData(WidgetLayoutSize.Medium, "gpuVramLabelCompact", "Dedicated memory")]
     [InlineData(WidgetLayoutSize.Large, "gpuVramLabel", "Dedicated GPU memory")]
     public void EveryProductionSize_RendersTheLabelFromThePayload(
         WidgetLayoutSize size,

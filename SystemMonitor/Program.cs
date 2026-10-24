@@ -78,11 +78,18 @@ namespace System_Monitor
                 detail: "export requested on the command line");
 
             MetricsSnapshot? snapshot = null;
+            LhmSensorBackendReport? sensorReport = null;
 
             try
             {
                 using var service = new SystemMetricsService(new SystemMetrics());
                 snapshot = service.Collect();
+
+                // The sensor backend's own account of what it enumerated and
+                // what the selection made of it. It is the evidence that
+                // explains an unavailable figure, so it travels with the
+                // export.
+                sensorReport = service.SensorBackendReport;
             }
             catch (Exception ex)
             {
@@ -95,7 +102,7 @@ namespace System_Monitor
                     detail: DiagnosticDetail.Describe(ex));
             }
 
-            DiagnosticHost.ExportIfRequested(args, snapshot);
+            DiagnosticHost.ExportIfRequested(args, snapshot, sensorReport: sensorReport);
         }
     }
 }

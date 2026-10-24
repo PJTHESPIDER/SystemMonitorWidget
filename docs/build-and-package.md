@@ -60,20 +60,39 @@ All three were run and all three succeeded with 0 warnings and 0 errors.
 dotnet test SystemMonitor.Tests/SystemMonitor.Tests.csproj
 ```
 
-Result on the current checkout:
+Result recorded for the current checkout at the final acceptance review on
+2026-10-23:
 
 ```
-Passed!  - Failed: 0, Passed: 415, Skipped: 0, Total: 415, Duration: 6 s
+Passed!  - Failed: 0, Passed: 598, Skipped: 0, Total: 598, Duration: 6 s
 ```
+
+The same suite was forced through a rebuild during that review and again
+passed 598/598. The current source build, installed package identity, and
+visual/lifecycle evidence are tracked separately in
+`docs/hardware-validation.md`; this test result does not establish that the
+installed package contains the current source.
+
+The final test run emitted CA1416 analyzer warnings for Windows-only WMI
+calls linked into the cross-platform test project. These were not suppressed;
+the Release `win-x64` application build completed with zero warnings and
+errors.
 
 The suite includes the update-pipeline lifecycle regression tests, which
 guard the activation/deactivation contract described in
 `docs/refactor-plan.md`. Those tests are not optional: any change to
 `Services/UpdatePipeline.cs` must leave them passing.
 
-The test project links the pure, hardware-independent source files
-directly. It does **not** reference the Windows App SDK and does not open
-any hardware, so it runs on a build agent.
+It also includes `CpuTemperatureDiagnosticsTests`, which cover the
+sensor-selection and diagnostic-diagnosis logic behind an unavailable
+temperature. See `docs/hardware-validation.md` §2.12.
+
+The test project links selected production source files directly. It does
+**not** reference the Windows App SDK; integration tests inject fake sensor
+sources and do not open real hardware. The LibreHardwareMonitor adapter is
+linked because the production service constructor references it, so its
+package is required at compile time. The suite can therefore run on a build
+agent without an attached hardware backend.
 
 ## 4. Package
 

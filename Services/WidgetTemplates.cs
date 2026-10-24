@@ -99,12 +99,12 @@ namespace System_Monitor.Services
         /// with no additional devices.
         ///
         /// <para>
-        /// The card is 148 pixels tall and its body has room for three
-        /// rows. It shows the CPU row, the GPU row and the RAM/disk row,
-        /// each headed by the name of what it reports. The GPU row does not
-        /// name the device and the figures carry no sub-headings: the
-        /// small card has no room for them, and the units — "%", "°C" and
-        /// a byte figure — say what each figure is.
+        /// The card is 148 pixels tall and its body has room for four
+        /// rows. It shows the CPU row, the GPU row, the RAM row and the
+        /// Disk row, each headed by the name of what it reports. The GPU
+        /// row does not name the device and the figures carry no
+        /// sub-headings: the small card has no room for them, and the
+        /// units — "%", "°C" and a byte figure — say what each figure is.
         /// </para>
         /// </summary>
         public const string SmallTemplate = """
@@ -113,6 +113,7 @@ namespace System_Monitor.Services
           "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
           "version": "1.6",
           "body": [
+            { "type": "TextBlock", "text": "Telemetry is stale", "size": "ExtraSmall", "isSubtle": true, "spacing": "None", "$when": "${sampleIsStale}" },
             {
               "type": "ColumnSet",
               "spacing": "None",
@@ -220,7 +221,7 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "${gpuVramUsed}",
+                      "text": "${gpuMemoryCapacityCompact}",
                       "size": "ExtraSmall",
                       "weight": "Bolder",
                       "spacing": "None"
@@ -248,17 +249,24 @@ namespace System_Monitor.Services
                 },
                 {
                   "type": "Column",
-                  "width": "auto",
+                  "width": "stretch",
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "${ramCompact}",
+                      "text": "${ramCapacityCompact}",
                       "size": "ExtraSmall",
                       "weight": "Bolder",
-                      "spacing": "None"
+                      "spacing": "None",
+                      "wrap": true
                     }
                   ]
-                },
+                }
+              ]
+            },
+            {
+              "type": "ColumnSet",
+              "spacing": "None",
+              "columns": [
                 {
                   "type": "Column",
                   "width": "auto",
@@ -274,14 +282,15 @@ namespace System_Monitor.Services
                 },
                 {
                   "type": "Column",
-                  "width": "auto",
+                  "width": "stretch",
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "${diskCompact}",
+                      "text": "${diskCapacityCompact}",
                       "size": "ExtraSmall",
                       "weight": "Bolder",
-                      "spacing": "None"
+                      "spacing": "None",
+                      "wrap": true
                     }
                   ]
                 }
@@ -292,8 +301,10 @@ namespace System_Monitor.Services
         """;
 
         /// <summary>
-        /// The medium layout: the CPU and the selected GPU are named, and one
-        /// additional device is listed when there is one.
+        /// The medium layout: the CPU and the selected GPU are named with
+        /// normalized compact names, and one additional device is listed
+        /// when there is one. RAM and disk show compact used/total capacities.
+        /// GPU memory uses the compact field with its semantic label.
         /// </summary>
         public const string MediumTemplate = """
         {
@@ -301,9 +312,10 @@ namespace System_Monitor.Services
           "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
           "version": "1.6",
           "body": [
+            { "type": "TextBlock", "text": "Telemetry is stale", "size": "ExtraSmall", "isSubtle": true, "spacing": "None", "$when": "${sampleIsStale}" },
             {
               "type": "TextBlock",
-              "text": "CPU — ${cpuName}",
+              "text": "CPU — ${cpuNameCompact}",
               "weight": "Bolder",
               "size": "Small",
               "spacing": "Small",
@@ -374,7 +386,7 @@ namespace System_Monitor.Services
             },
             {
               "type": "TextBlock",
-              "text": "GPU — ${gpuLabel}",
+              "text": "GPU — ${gpuNameCompact}",
               "weight": "Bolder",
               "size": "Small",
               "spacing": "Small",
@@ -438,14 +450,14 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "${gpuVramLabel}",
+                      "text": "${gpuVramLabelCompact}",
                       "size": "Small",
                       "isSubtle": true,
                       "wrap": true
                     },
                     {
                       "type": "TextBlock",
-                      "text": "${gpuVram}",
+                      "text": "${gpuMemoryCapacityCompact}",
                       "size": "Medium",
                       "weight": "Bolder",
                       "spacing": "None",
@@ -473,7 +485,7 @@ namespace System_Monitor.Services
             },
             {
               "type": "TextBlock",
-              "text": "${ramCompact}",
+              "text": "${ramCapacityCompact}",
               "size": "Medium",
               "weight": "Bolder",
               "spacing": "None",
@@ -488,7 +500,7 @@ namespace System_Monitor.Services
             },
             {
               "type": "TextBlock",
-              "text": "${diskCompact}",
+              "text": "${diskCapacityCompact}",
               "size": "Medium",
               "weight": "Bolder",
               "spacing": "None",
@@ -500,8 +512,14 @@ namespace System_Monitor.Services
 
         /// <summary>
         /// The large layout: everything the medium layout shows, plus the
-        /// network figures, the sample time, and up to three additional
-        /// devices.
+        /// network figures and up to three additional devices.
+        ///
+        /// <para>
+        /// The Sample heading and sampleTime value are removed from display.
+        /// The Network section is a balanced Download/Upload layout.
+        /// Snapshot and measurement timestamps are retained in the payload
+        /// for diagnostic provenance and internal freshness logic.
+        /// </para>
         /// </summary>
         public const string LargeTemplate = """
         {
@@ -509,9 +527,10 @@ namespace System_Monitor.Services
           "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
           "version": "1.6",
           "body": [
+            { "type": "TextBlock", "text": "Telemetry is stale", "size": "ExtraSmall", "isSubtle": true, "spacing": "None", "$when": "${sampleIsStale}" },
             {
               "type": "TextBlock",
-              "text": "Processor (CPU) — ${cpuName}",
+              "text": "Processor (CPU) — ${cpuNameCompact}",
               "weight": "Bolder",
               "size": "Medium",
               "spacing": "Medium",
@@ -583,7 +602,7 @@ namespace System_Monitor.Services
             },
             {
               "type": "TextBlock",
-              "text": "Graphics (GPU) — ${gpuLabel}",
+              "text": "Graphics (GPU) — ${gpuNameCompact}",
               "weight": "Bolder",
               "size": "Medium",
               "spacing": "Medium",
@@ -654,7 +673,7 @@ namespace System_Monitor.Services
                     },
                     {
                       "type": "TextBlock",
-                      "text": "${gpuVram}",
+                      "text": "${gpuMemoryCapacityCompact}",
                       "size": "Medium",
                       "weight": "Bolder",
                       "spacing": "None",
@@ -714,7 +733,7 @@ namespace System_Monitor.Services
                     },
                     {
                       "type": "TextBlock",
-                      "text": "${ram}",
+                      "text": "${ramCapacityCompact}",
                       "size": "Medium",
                       "weight": "Bolder",
                       "spacing": "None"
@@ -746,7 +765,7 @@ namespace System_Monitor.Services
                     },
                     {
                       "type": "TextBlock",
-                      "text": "${disk}",
+                      "text": "${diskCapacityCompact}",
                       "size": "Medium",
                       "weight": "Bolder",
                       "spacing": "None"
@@ -798,25 +817,6 @@ namespace System_Monitor.Services
                     {
                       "type": "TextBlock",
                       "text": "${netUp}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
-                    }
-                  ]
-                },
-                {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "Sample",
-                      "size": "Small",
-                      "isSubtle": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${sampleTime}",
                       "size": "Medium",
                       "weight": "Bolder",
                       "spacing": "None"

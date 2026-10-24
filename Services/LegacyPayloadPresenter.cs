@@ -47,20 +47,28 @@ namespace System_Monitor.Services
             // present (e.g. Intel iGPU + NVIDIA dGPU), the "best available" reading
             // is chosen. This is intentionally lossy — templates should move to
             // per-device keys (gpuLoad:{deviceId}) in the alignment phase.
-            var gpuLoad = BestGpuReading(snapshot, "LoadPercent");
-            var gpuTemp = BestGpuReading(snapshot, "TemperatureC");
-            var gpuVram = BestGpuReading(snapshot, "VramUsedBytes");
-            var gpuVramTotal = BestGpuReading(snapshot, "VramTotalBytes");
-            var primaryGpu = LhmSnapshotMapper.SelectPrimaryGpu(snapshot.Gpus);
+            var primaryGpu = LhmSnapshotMapper.SelectPrimaryGpu(
+                snapshot.Gpus,
+                snapshot,
+                snapshot.GpuLoadPercent,
+                snapshot.GpuLoadDeviceId,
+                snapshot.GpuTemperatureC,
+                snapshot.GpuTemperatureDeviceId,
+                snapshot.GpuVramUsedBytes,
+                snapshot.GpuVramUsedDeviceId,
+                snapshot.GpuVramTotalBytes,
+                snapshot.GpuVramTotalDeviceId);
 
-            payload["gpu"] = FormatPercent(gpuLoad);
-            payload["gpuTemp"] = FormatTemperature(gpuTemp);
+            payload["gpu"] = FormatPercent(MeasurementOf(Reading(snapshot, primaryGpu?.DeviceId, "LoadPercent")));
+            payload["gpuTemp"] = FormatTemperature(MeasurementOf(Reading(snapshot, primaryGpu?.DeviceId, "TemperatureC")));
 
             // The memory figure and the heading it sits under come from
             // the same resolver the production presenter uses, so the
             // legacy contract cannot drift from it. The legacy presenter
             // reads both figures from the presented device's own
             // readings, so the device check is satisfied by construction.
+            var gpuVram = MeasurementOf(Reading(snapshot, primaryGpu?.DeviceId, "VramUsedBytes"));
+            var gpuVramTotal = MeasurementOf(Reading(snapshot, primaryGpu?.DeviceId, "VramTotalBytes"));
             var gpuMemory = GpuMemoryPresentation.Resolve(
                 gpuVram,
                 primaryGpu?.DeviceId,
@@ -85,6 +93,9 @@ namespace System_Monitor.Services
             payload["ramCombined"] = $"{payload["ramUsed"]} / {payload["ramTotal"]}";
             payload["ramPercent"] = FormatPercent(snapshot.RamPercent);
             payload["ramCompact"] = $"{payload["ramUsed"]} ({payload["ramPercent"]})";
+            payload["ramCapacityCompact"] = ByteFormatter.FormatCapacityCompact(
+                GetValueOrDefault(snapshot.RamUsedBytes),
+                GetValueOrDefault(snapshot.RamTotalBytes));
 
             // --- Disk ---
             payload["disk"] = FormatUsage(snapshot.DiskUsedBytes, snapshot.DiskTotalBytes, snapshot.DiskPercent);
@@ -93,6 +104,9 @@ namespace System_Monitor.Services
             payload["diskCombined"] = $"{payload["diskUsed"]} / {payload["diskTotal"]}";
             payload["diskPercent"] = FormatPercent(snapshot.DiskPercent);
             payload["diskCompact"] = $"{payload["diskUsed"]} ({payload["diskPercent"]})";
+            payload["diskCapacityCompact"] = ByteFormatter.FormatCapacityCompact(
+                GetValueOrDefault(snapshot.DiskUsedBytes),
+                GetValueOrDefault(snapshot.DiskTotalBytes));
 
             // --- Network ---
             payload["netDown"] = FormatNetworkSpeed(snapshot.NetworkDownloadBytesPerSec);
@@ -205,5 +219,19 @@ namespace System_Monitor.Services
             m?.Status == MeasurementStatus.Available && m.Value.HasValue
                 ? ByteFormatter.FormatNetworkSpeed(m.Value.Value)
                 : "N/A";
+
+        /// <summary>
+        /// Gets the double value of a measurement or 0 if not available.
+        /// </summary>
+        private static double GetValueOrDefault(Measurement? measurement)
+        {
+            if (measurement is not null
+                && measurement.Status == MeasurementStatus.Available
+                && measurement.Value.HasValue)
+            {
+                return measurement.Value.Value;
+            }
+            return 0;
+        }
     }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System_Monitor.Models;
 
 namespace System_Monitor.Services
 {
@@ -52,6 +53,20 @@ namespace System_Monitor.Services
 
         /// <summary>Unit the raw value is expressed in.</summary>
         public LhmSensorUnit Unit { get; init; } = LhmSensorUnit.Unknown;
+
+        /// <summary>
+        /// True when the value is one retained from an earlier read, because
+        /// the hardware node that owns the sensor could not be refreshed.
+        ///
+        /// <para>
+        /// A retained value is a real measurement — of some earlier moment —
+        /// but it is not a measurement of this cycle, so it must never be
+        /// published as one. The distinction is carried here rather than
+        /// being inferred downstream, because the source is the only place
+        /// that knows which node failed to update.
+        /// </para>
+        /// </summary>
+        public bool IsRetained { get; init; }
     }
 
     /// <summary>
@@ -337,6 +352,44 @@ namespace System_Monitor.Services
         }
 
         /// <summary>
+        /// True when a sensor is deliberately not a candidate for the metric,
+        /// because using it would be wrong rather than because its name is
+        /// unfamiliar.
+        ///
+        /// <para>
+        /// The shared-memory sensors are the case that matters: a device
+        /// that reports only "D3D Shared Memory Used" has readable memory
+        /// sensors, but they describe shared system memory, which is not
+        /// dedicated video memory. Reporting them as VRAM would be wrong,
+        /// so they are never selected.
+        /// </para>
+        ///
+        /// <para>
+        /// The distinction matters to the diagnostics: a deliberately
+        /// excluded sensor is a deliberate choice, while an unrecognized
+        /// name is a gap in the candidate list that might need filling.
+        /// They need different answers, so they are told apart here.
+        /// </para>
+        /// </summary>
+        /// <param name="sensorName">The sensor's name.</param>
+        /// <param name="kind">The metric the sensor was considered for.</param>
+        public static bool IsDeliberatelyExcluded(string? sensorName, LhmSensorKind kind)
+        {
+            if (string.IsNullOrWhiteSpace(sensorName))
+                return false;
+
+            switch (kind)
+            {
+                case LhmSensorKind.GpuMemoryUsedBytes:
+                case LhmSensorKind.GpuMemoryTotalBytes:
+                    return IsSharedMemorySensor(sensorName);
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
         /// Selects the sensor supplying <paramref name="kind"/>.
         /// </summary>
         /// <param name="sensors">All sensors exposed by the device.</param>
@@ -400,6 +453,112 @@ namespace System_Monitor.Services
             if (sensor?.Value is not { } value)
                 return false;
             return !double.IsNaN(value) && !double.IsInfinity(value);
+        }
+
+        /// <summary>
+        /// The candidate names for a metric, in preference order.
+        ///
+        /// <para>
+        /// The list is exposed so the diagnostics can report what was
+        /// looked for, not only what was found. A reader who knows the
+        /// names that were searched for can tell an unrecognized name from
+        /// a recognized name that had no value.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string> CandidateNamesFor(LhmSensorKind kind) =>
+            CandidatesFor(kind);
+
+        /// <summary>
+        /// Records what the selection saw for one metric on one device.
+        ///
+        /// <para>
+        /// The trace is the evidence behind a diagnosis: which sensors of
+        /// the required type the device exposed, which of those the
+        /// candidate list recognizes, which of those carry a value, and
+        /// which one was chosen. Without it, "no sensor", "blocked sensor"
+        /// and "unrecognized name" are indistinguishable.
+        /// </para>
+        /// </summary>
+        /// <param name="metric">The metric's published name, e.g. "TemperatureC".</param>
+        /// <param name="kind">The metric being selected.</param>
+        /// <param name="sensors">All sensors the device exposes.</param>
+        /// <param name="selected">The sensor that was selected, or null.</param>
+        /// <param name="measurementStatus">The status of the mapped measurement.</param>
+        /// <param name="source">The provenance of the mapped measurement.</param>
+        /// <param name="refreshFailed">
+        /// True when the hardware node could not be refreshed, so the
+        /// sensor values are retained from an earlier read.
+        /// </param>
+        public static LhmMetricTrace Trace(
+            string metric,
+            LhmSensorKind kind,
+            IEnumerable<LhmSensorDescriptor>? sensors,
+            LhmSensorDescriptor? selected,
+            MeasurementStatus measurementStatus,
+            string? source,
+            bool refreshFailed = false)
+        {
+            var requiredType = RequiredSensorType(kind);
+
+            var typed = (sensors ?? Array.Empty<LhmSensorDescriptor>())
+                .Where(s => string.Equals(s.SensorType, requiredType, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var recognized = typed
+                .Where(s => IsRecognizedName(s.Name, kind))
+                .ToList();
+
+            var readable = typed
+                .Where(IsReadable)
+                .ToList();
+
+            // A sensor that was deliberately excluded — a shared-memory
+            // reading offered for a dedicated-memory metric — is not a
+            // name the candidate list failed to recognize. It is a sensor
+            // that would have been wrong to use.
+            var excluded = typed
+                .Where(s => IsDeliberatelyExcluded(s.Name, kind))
+                .ToList();
+
+            return new LhmMetricTrace
+            {
+                Metric = metric,
+                RequiredSensorType = requiredType,
+                SensorCount = typed.Count,
+                CandidateNames = CandidatesFor(kind),
+                RecognizedSensors = recognized,
+                ReadableSensors = readable,
+                ExcludedSensors = excluded,
+                SelectedSensor = selected,
+                RefreshFailed = refreshFailed,
+                MeasurementStatus = measurementStatus,
+                Source = source,
+            };
+        }
+
+        /// <summary>
+        /// True when a sensor's name is one the candidate list recognizes
+        /// for the metric, whether or not the sensor carries a value.
+        ///
+        /// <para>
+        /// This is the same matching the selection uses — an exact name, or
+        /// a numbered variant of one — so a name the selection would have
+        /// chosen is never reported here as unrecognized.
+        /// </para>
+        /// </summary>
+        public static bool IsRecognizedName(string? sensorName, LhmSensorKind kind)
+        {
+            if (string.IsNullOrWhiteSpace(sensorName))
+                return false;
+
+            var requiredType = RequiredSensorType(kind);
+
+            var typed = new List<LhmSensorDescriptor>
+            {
+                new LhmSensorDescriptor { Name = sensorName!, SensorType = requiredType },
+            };
+
+            return Select(typed, kind) is not null;
         }
 
         /// <summary>

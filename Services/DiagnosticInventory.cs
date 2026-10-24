@@ -67,8 +67,16 @@ namespace System_Monitor.Services
         /// <param name="snapshot">The snapshot to describe, or null when no snapshot exists yet.</param>
         /// <param name="path">The file to write.</param>
         /// <param name="log">The log the export itself is reported to, or null.</param>
+        /// <param name="sensorReport">
+        /// The sensor backend's state and per-device traces, or null when
+        /// the collector did not run.
+        /// </param>
         /// <returns>The path written to.</returns>
-        public static string Write(MetricsSnapshot? snapshot, string path, DiagnosticLog? log = null)
+        public static string Write(
+            MetricsSnapshot? snapshot,
+            string path,
+            DiagnosticLog? log = null,
+            LhmSensorBackendReport? sensorReport = null)
         {
             if (string.IsNullOrWhiteSpace(path))
                 throw new ArgumentException("A destination path is required.", nameof(path));
@@ -77,7 +85,7 @@ namespace System_Monitor.Services
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
                 Directory.CreateDirectory(directory);
 
-            File.WriteAllText(path, Build(snapshot), Encoding.UTF8);
+            File.WriteAllText(path, Build(snapshot, sensorReport), Encoding.UTF8);
 
             log?.Info(
                 "diagnostics",
@@ -92,7 +100,12 @@ namespace System_Monitor.Services
         /// Renders the inventory as text.
         /// </summary>
         /// <param name="snapshot">The snapshot to describe, or null.</param>
-        public static string Build(MetricsSnapshot? snapshot)
+        /// <param name="sensorReport">
+        /// The sensor backend's state and per-device traces, or null.
+        /// </param>
+        public static string Build(
+            MetricsSnapshot? snapshot,
+            LhmSensorBackendReport? sensorReport = null)
         {
             var builder = new StringBuilder(4096);
 
@@ -132,6 +145,7 @@ namespace System_Monitor.Services
             AppendDevices(builder, "cpu", snapshot.Cpus, snapshot);
             AppendDevices(builder, "gpu", snapshot.Gpus, snapshot);
             AppendSystemMetrics(builder, snapshot);
+            AppendSensorTrace(builder, snapshot, sensorReport);
 
             return builder.ToString();
         }
@@ -237,5 +251,169 @@ namespace System_Monitor.Services
             builder.Append("      unit: ").Append(measurement.Unit ?? "(none)").Append("\r\n");
             builder.Append("      source: ").Append(measurement.Source ?? "(none)").Append("\r\n");
         }
+
+        /// <summary>
+        /// Writes the sensor trace: what the backend enumerated, what the
+        /// selection made of it, and why a figure is or is not available.
+        ///
+        /// <para>
+        /// This section is what makes an unavailable figure explainable. It
+        /// names every sensor the device exposed with its type, value and
+        /// unit; says which candidate names were searched for; says which
+        /// sensor was chosen; gives the status of the resulting
+        /// measurement; and gives a diagnosis in the six cases that need
+        /// different answers.
+        /// </para>
+        ///
+        /// <para>
+        /// It is opt-in like the rest of the inventory: it describes one
+        /// machine in detail and belongs in a file the user asked for, not
+        /// in the routine log.
+        /// </para>
+        /// </summary>
+        private static void AppendSensorTrace(
+            StringBuilder builder,
+            MetricsSnapshot snapshot,
+            LhmSensorBackendReport? report)
+        {
+            builder.Append("[sensor trace]\r\n");
+
+            if (report is null)
+            {
+                builder.Append("  (not collected)\r\n\r\n");
+                return;
+            }
+
+            var backend = report.Backend;
+
+            builder.Append("  backend_initialized: ").Append(backend.Initialized).Append("\r\n");
+            builder.Append("  read_failed: ").Append(backend.ReadFailed).Append("\r\n");
+            builder.Append("  read_at: ")
+                   .Append(backend.ReadAt.ToString("yyyy-MM-dd HH:mm:ss.fff zzz", CultureInfo.InvariantCulture))
+                   .Append("\r\n");
+            builder.Append("  device_count: ").Append(backend.DeviceCount).Append("\r\n");
+
+            if (!string.IsNullOrWhiteSpace(backend.FailureReason))
+                builder.Append("  failure_reason: ").Append(backend.FailureReason).Append("\r\n");
+
+            builder.Append("\r\n");
+
+            if (!backend.Initialized || backend.ReadFailed)
+            {
+                builder.Append("  diagnosis: ")
+                       .Append(LhmSensorDiagnosisPolicy.Describe(LhmSensorDiagnosis.BackendUnavailable))
+                       .Append("\r\n\r\n");
+                return;
+            }
+
+            foreach (var device in report.Devices)
+            {
+                builder.Append("  - device_id: ").Append(device.DeviceId).Append("\r\n");
+                builder.Append("    name: ").Append(device.DeviceName).Append("\r\n");
+                builder.Append("    class: ").Append(device.IsCpu ? "Cpu" : "Gpu").Append("\r\n");
+                builder.Append("    refresh_failed: ").Append(device.RefreshFailed).Append("\r\n");
+
+                builder.Append("    raw_sensors:\r\n");
+                if (device.Sensors.Count == 0)
+                {
+                    builder.Append("      (none)\r\n");
+                }
+                else
+                {
+                    foreach (var sensor in device.Sensors)
+                    {
+                        builder.Append("      - name: ").Append(sensor.Name).Append("\r\n");
+                        builder.Append("        type: ").Append(sensor.SensorType).Append("\r\n");
+                        builder.Append("        value: ")
+                               .Append(sensor.Value?.ToString("F2", CultureInfo.InvariantCulture) ?? "(null)")
+                               .Append("\r\n");
+                        builder.Append("        unit: ").Append(DescribeUnit(sensor.Unit)).Append("\r\n");
+                        builder.Append("        retained: ").Append(sensor.IsRetained).Append("\r\n");
+                    }
+                }
+
+                builder.Append("    metrics:\r\n");
+                foreach (var metric in device.Metrics)
+                {
+                    // The device's own reading, and the figure that was
+                    // actually published for the metric. For the CPU
+                    // temperature the published figure is the merged
+                    // scalar, so it is the one the diagnosis compares
+                    // against: it is what the widget shows.
+                    var deviceReading = PublishedMeasurement(snapshot, device.DeviceId, metric.Metric);
+
+                    var published = device.IsCpu && metric.Metric == LhmSensorSelection.CpuTemperatureMetric
+                        ? snapshot.CpuTemperatureC ?? deviceReading
+                        : deviceReading;
+
+                    var diagnosis = LhmSensorDiagnosisPolicy.Diagnose(
+                        backend,
+                        device,
+                        metric,
+                        published);
+
+                    builder.Append("      - metric: ").Append(metric.Metric).Append("\r\n");
+                    builder.Append("        required_sensor_type: ")
+                           .Append(metric.RequiredSensorType).Append("\r\n");
+                    builder.Append("        sensor_count: ").Append(metric.SensorCount).Append("\r\n");
+                    builder.Append("        candidate_names: ")
+                           .Append(string.Join(", ", metric.CandidateNames)).Append("\r\n");
+                    builder.Append("        recognized_sensors: ")
+                           .Append(DescribeSensors(metric.RecognizedSensors)).Append("\r\n");
+                    builder.Append("        readable_sensors: ")
+                           .Append(DescribeSensors(metric.ReadableSensors)).Append("\r\n");
+                    builder.Append("        excluded_sensors: ")
+                           .Append(DescribeSensors(metric.ExcludedSensors)).Append("\r\n");
+                    builder.Append("        selected_sensor: ")
+                           .Append(metric.SelectedSensor?.Name ?? "(none)").Append("\r\n");
+                    builder.Append("        measurement_status: ")
+                           .Append(metric.MeasurementStatus).Append("\r\n");
+                    builder.Append("        source: ")
+                           .Append(metric.Source ?? "(none)").Append("\r\n");
+                    builder.Append("        published_value: ")
+                           .Append(published?.Value?.ToString("F2", CultureInfo.InvariantCulture) ?? "(none)")
+                           .Append("\r\n");
+                    builder.Append("        published_status: ")
+                           .Append(published?.Status.ToString() ?? "(not published)").Append("\r\n");
+                    builder.Append("        diagnosis: ")
+                           .Append(LhmSensorDiagnosisPolicy.Describe(diagnosis)).Append("\r\n");
+                }
+
+                builder.Append("\r\n");
+            }
+        }
+
+        /// <summary>
+        /// The measurement published for a device's metric, or null when the
+        /// published figure is a system-level scalar rather than the
+        /// device's own reading.
+        /// </summary>
+        private static Measurement? PublishedMeasurement(
+            MetricsSnapshot snapshot,
+            string deviceId,
+            string metric)
+        {
+            return snapshot.Readings
+                .FirstOrDefault(r => r.DeviceId == deviceId && r.Metric == metric)?
+                .Measurement;
+        }
+
+        private static string DescribeSensors(IReadOnlyList<LhmSensorDescriptor> sensors)
+        {
+            if (sensors.Count == 0)
+                return "(none)";
+
+            return string.Join(", ", sensors.Select(s => $"{s.Name}={s.Value?.ToString("F2", CultureInfo.InvariantCulture) ?? "(null)"}"));
+        }
+
+        private static string DescribeUnit(LhmSensorUnit unit) => unit switch
+        {
+            LhmSensorUnit.Percent => "%",
+            LhmSensorUnit.Celsius => "°C",
+            LhmSensorUnit.Megahertz => "MHz",
+            LhmSensorUnit.Megabyte => "MB",
+            LhmSensorUnit.Byte => "B",
+            _ => "unknown",
+        };
     }
 }

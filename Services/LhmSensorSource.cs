@@ -48,6 +48,22 @@ namespace System_Monitor.Services
 
         public IReadOnlyList<LhmSensorDescriptor> Sensors { get; init; } =
             Array.Empty<LhmSensorDescriptor>();
+
+        /// <summary>
+        /// True when the device's hardware node could not be refreshed during
+        /// the last read, so the values it exposes are ones retained from an
+        /// earlier read rather than ones measured now.
+        ///
+        /// <para>
+        /// The backend is not uniform here: some of its aggregate sensors
+        /// keep their previous value when an underlying read fails, while
+        /// others are explicitly cleared. So a retained value can be a
+        /// real reading — of an earlier moment — presented as if it were
+        /// current. The flag lets the collection path refuse to publish a
+        /// retained value as a fresh measurement.
+        /// </para>
+        /// </summary>
+        public bool RefreshFailed { get; init; }
     }
 
     /// <summary>

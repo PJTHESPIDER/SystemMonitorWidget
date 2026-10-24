@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using LibreHardwareMonitor.Hardware;
 using LibreHardwareMonitor.Hardware.Gpu;
 
@@ -37,6 +38,14 @@ namespace System_Monitor.Services
         private Computer? _computer;
         private bool _initialized;
         private bool _disposed;
+
+        /// <summary>
+        /// The hardware identifiers whose most recent refresh failed. A
+        /// hardware node that could not be updated may still expose the
+        /// values it read earlier, so its readings are retained rather than
+        /// measured.
+        /// </summary>
+        private readonly HashSet<string> _failedRefreshes = new(StringComparer.Ordinal);
 
         public bool IsAvailable { get; private set; }
 
@@ -79,9 +88,9 @@ namespace System_Monitor.Services
                 {
                     foreach (var hardware in _computer!.Hardware)
                     {
-                        UpdateRecursive(hardware);
+                        var refreshFailed = UpdateRecursive(hardware);
 
-                        var descriptor = Describe(hardware);
+                        var descriptor = Describe(hardware, refreshFailed);
                         if (descriptor is not null)
                             devices.Add(descriptor);
                     }
@@ -173,14 +182,23 @@ namespace System_Monitor.Services
         /// held by sub-hardware (for example a GPU's memory controller) are
         /// refreshed too.
         /// </summary>
-        private static void UpdateRecursive(IHardware hardware)
+        /// <returns>
+        /// True when any node in the tree failed to refresh. A node that
+        /// could not be updated may still expose the values it read
+        /// earlier, so its readings are retained rather than measured.
+        /// </returns>
+        private bool UpdateRecursive(IHardware hardware)
         {
+            var failed = false;
+
             try
             {
                 hardware.Update();
             }
             catch (Exception ex)
             {
+                failed = true;
+
                 // The device's name is not logged: a routine log describes
                 // the backend's behaviour, not the machine's inventory. The
                 // hardware type is enough to tell a CPU from a GPU.
@@ -191,11 +209,26 @@ namespace System_Monitor.Services
                     detail: $"type={hardware.HardwareType} {DiagnosticDetail.Describe(ex)}");
             }
 
+            var identifier = hardware.Identifier?.ToString() ?? string.Empty;
+
+            lock (_lock)
+            {
+                if (failed && !string.IsNullOrEmpty(identifier))
+                    _failedRefreshes.Add(identifier);
+                else if (!string.IsNullOrEmpty(identifier))
+                    _failedRefreshes.Remove(identifier);
+            }
+
             foreach (var sub in hardware.SubHardware)
-                UpdateRecursive(sub);
+            {
+                if (UpdateRecursive(sub))
+                    failed = true;
+            }
+
+            return failed;
         }
 
-        private static LhmDeviceDescriptor? Describe(IHardware hardware)
+        private LhmDeviceDescriptor? Describe(IHardware hardware, bool refreshFailed)
         {
             var hardwareType = hardware.HardwareType;
 
@@ -214,7 +247,7 @@ namespace System_Monitor.Services
             if (string.IsNullOrEmpty(identifier))
                 return null;
 
-            var sensors = CollectSensors(hardware);
+            var sensors = CollectSensors(hardware, refreshFailed);
 
             return new LhmDeviceDescriptor
             {
@@ -226,6 +259,7 @@ namespace System_Monitor.Services
                 PciDeviceKey = isGpu ? ReadPciDeviceKey(hardware) : null,
                 InstanceId = isGpu ? ReadInstanceId(hardware) : null,
                 Sensors = sensors,
+                RefreshFailed = refreshFailed,
             };
         }
 
@@ -324,14 +358,20 @@ namespace System_Monitor.Services
         /// Sensor values that are null, NaN or infinite are recorded as null
         /// (unavailable) rather than zero.
         /// </summary>
-        private static List<LhmSensorDescriptor> CollectSensors(IHardware hardware)
+        /// <param name="hardware">The hardware node to read.</param>
+        /// <param name="refreshFailed">
+        /// True when the node could not be refreshed, so the values it
+        /// exposes are ones retained from an earlier read.
+        /// </param>
+        private static IReadOnlyList<LhmSensorDescriptor> CollectSensors(IHardware hardware, bool refreshFailed)
         {
             var result = new List<LhmSensorDescriptor>();
-            CollectSensors(hardware, result);
-            return result;
+            CollectSensors(hardware, result, refreshFailed);
+
+            return LhmRetainedSensorPolicy.MarkRetainedAggregates(result);
         }
 
-        private static void CollectSensors(IHardware hardware, List<LhmSensorDescriptor> into)
+        private static void CollectSensors(IHardware hardware, List<LhmSensorDescriptor> into, bool refreshFailed)
         {
             foreach (var sensor in hardware.Sensors)
             {
@@ -341,11 +381,12 @@ namespace System_Monitor.Services
                     SensorType = sensor.SensorType.ToString(),
                     Value = Normalize(sensor.Value),
                     Unit = DeriveUnit(sensor.SensorType),
+                    IsRetained = refreshFailed,
                 });
             }
 
             foreach (var sub in hardware.SubHardware)
-                CollectSensors(sub, into);
+                CollectSensors(sub, into, refreshFailed);
         }
 
         private static double? Normalize(float? value)

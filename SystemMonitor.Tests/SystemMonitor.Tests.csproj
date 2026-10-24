@@ -24,16 +24,24 @@
     <!-- FakeTimeProvider gives the pipeline tests virtual time, so polling
          intervals are advanced deterministically instead of slept through. -->
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="8.10.0" />
+    <!-- Required for SystemMetricsService integration tests -->
+    <PackageReference Include="System.Management" Version="10.0.2" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="8.0.0" />
+    <PackageReference Include="System.Security.Permissions" Version="8.0.0" />
+    <!-- Required because SystemMetricsService references LibreHardwareMonitorSource internally;
+         the tests inject a fake ILhmSensorSource but the type still needs to resolve at compile time. -->
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
   </ItemGroup>
 
-  <!-- Link only the pure, hardware-independent logic files so tests do not
-       require WindowsAppSDK or real hardware. The LibreHardwareMonitor
-       adapter itself is deliberately NOT linked: it is the only file that
-       touches the library, and linking it would pull the native-free but
-       still hardware-facing dependency into the test host. The mapping logic
-       it feeds is linked and tested through fixtures. -->
+  <!-- Link the production logic without the Windows App SDK host. The
+       LibreHardwareMonitor adapter is linked because SystemMetricsService's
+       production constructor references it; integration tests inject a fake
+       ILhmSensorSource, so the adapter does not open real hardware in tests.
+       Its package reference is therefore a compile-time dependency of the
+       linked production source, not a hardware test backend. -->
   <ItemGroup>
     <Compile Include="../Models/HardwareModels.cs" Link="Models/%(Filename)%(Extension)" />
+    <Compile Include="../Models/SystemMetrics.cs" Link="Models/%(Filename)%(Extension)" />
     <Compile Include="../Services/ThermalMath.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/NetworkDeltaCalculator.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/NetworkInterfacePolicy.cs" Link="Services/%(Filename)%(Extension)" />
@@ -59,6 +67,21 @@
       directly.
     -->
     <Compile Include="../Services/GpuSelectionPolicy.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/SystemMetricsService.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/GpuService.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/ScalarCollectorState.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/ScalarCandidate.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/ScalarMergePolicy.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaGpuFallback.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaGpuFallbackPolicy.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaGpuReconciler.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaGpuIdentity.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaGpuSample.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaSmiParser.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaSmiLocator.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/IProcessRunner.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/SystemProcessRunner.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/NvidiaGpuFallbackSelector.cs" Link="Services/%(Filename)%(Extension)" />
     <!--
       The policies that decide whether an unattributed reading may be
       presented, and whether a failed read may be presented as a value.
@@ -73,9 +96,6 @@
       over a measurement, so it is exercised directly.
     -->
     <Compile Include="../Services/GpuMemoryPresentation.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/ScalarCollectorState.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/ScalarCandidate.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/ScalarMergePolicy.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/WidgetLayoutSize.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/WidgetPayload.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/WidgetPayloadPresenter.cs" Link="Services/%(Filename)%(Extension)" />
@@ -83,26 +103,20 @@
     <Compile Include="../Services/LhmSensorSelection.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/LhmSensorSource.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/LhmSnapshotMapper.cs" Link="Services/%(Filename)%(Extension)" />
+    <!--
+      The sensor diagnostics: the trace of what the selection saw and the
+      policy that turns that trace into a diagnosis. Both are pure logic
+      over the selection's own types, so the six distinguishable causes of
+      an unavailable figure can be exercised without hardware.
+    -->
+    <Compile Include="../Services/LhmSensorDiagnostics.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/LhmRetainedSensorPolicy.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/GpuSelectionTracker.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/GpuExtrasTracker.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/IMetricsCollector.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/UpdatePipeline.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../Services/WidgetRegistry.cs" Link="Services/%(Filename)%(Extension)" />
-    <!--
-      The NVIDIA command-line fallback. These files are pure and take their
-      process execution through the injectable IProcessRunner, so they can be
-      tested with a fake runner and no NVIDIA driver. The real runner
-      (SystemProcessRunner) is also linked; it is only exercised indirectly,
-      and the fallback tests never invoke it.
-    -->
-    <Compile Include="../Services/IProcessRunner.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/NvidiaGpuSample.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/NvidiaSmiParser.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/NvidiaGpuIdentity.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/NvidiaGpuReconciler.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/NvidiaGpuFallbackSelector.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/NvidiaGpuFallbackPolicy.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/NvidiaGpuFallback.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/NvidiaSmiLocator.cs" Link="Services/%(Filename)%(Extension)" />
-    <Compile Include="../Services/SystemProcessRunner.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../Services/LibreHardwareMonitorSource.cs" Link="Services/%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

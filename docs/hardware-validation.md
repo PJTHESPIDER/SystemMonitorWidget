@@ -40,11 +40,12 @@ were taken from the diagnostic inventory export
 (`SystemMonitor.exe --export-diagnostics <path>`), which runs the real
 collection path end to end.
 
-### 1.1 Live-host environment
+### 1.1 Historical live-host environment (prior candidate)
 
-The Windows Widgets host was available on this machine, so the widget
-itself was pinned, rendered and driven. The environment in which the
-observations in §2.6, §2.7, §2.9 and §2.11 were made:
+The Windows Widgets host was available during the earlier validation run,
+so the widget itself was pinned, rendered and driven. These details apply
+to the historical observations in §2.6, §2.7, §2.9 and §2.11; they do not
+establish current-candidate host access or screenshot provenance:
 
 | Property | Value |
 |---|---|
@@ -66,6 +67,12 @@ from the template.
 
 ## 2. Real-hardware results
 
+Unless a subsection explicitly says otherwise, these device and sensor
+observations are historical diagnostics from an earlier source/package
+checkpoint. They are not proof that the currently installed package
+matches this checkout; the current source/package DLL mismatch is recorded
+in the final acceptance checkpoint below.
+
 ### 2.1 Device detection and sensor selection
 
 Observed from the inventory export on the test machine:
@@ -85,20 +92,26 @@ What this confirms on real hardware:
 - The Intel card's `D3D 3D` sensor is selected for load, and its
   temperature/VRAM sensors are reported as **Unsupported** — "no such
   sensor" — rather than as zero.
+- **The Intel UHD Graphics load of 0% (`D3D 3D`) is an `Available`
+  measured value** (the sensor returned 0.0), not a fallback or fabricated
+  zero. The sensor was successfully read and produced a value of 0.0.
 - The NVIDIA card's core sensors are selected for load, temperature and
   dedicated memory.
-- The CPU **temperature** read **Failed** on this machine. Reading the
-  MSR-based CPU package temperature requires a kernel-mode driver that the
-  widget does not request, because the widget deliberately does not
-  elevate. The failure is surfaced as `Failed`, with no value, rather than
-  as a zero or a substitute reading.
+- The CPU **temperature** read **Failed** on this machine. The recognized
+  sensors returned null under the tested standard-user context. An
+  access/driver limitation is suspected, but the elevated comparison has
+  not been performed and the cause is unconfirmed. The failure is surfaced
+  as `Failed`, with no value, rather than as a zero or substitute reading;
+  §2.12 records the evidence and remaining question.
 - The CPU **clock** was read successfully through `Win32_Processor`
   (2304 MHz), because that class does not require elevation.
 
-### 2.2 Unavailable and blocked sensor access
+### 2.2 Unavailable and blocked sensor access (historical hardware evidence)
 
-The test machine is itself the blocked-sensor case: the CPU temperature
-is unreadable without elevation, and the widget does not request it.
+The test machine is itself the observed unavailable-sensor case: CPU
+temperature sensors returned null under the tested standard-user context.
+An elevated comparison has not been performed, and the reason is not
+confirmed.
 
 Observed behaviour after the fixes in this task:
 
@@ -107,7 +120,7 @@ Observed behaviour after the fixes in this task:
 | `cpu_temperature_c` | value absent, status `Failed` | `Failed`, source `LibreHardwareMonitor` |
 | `acpi_thermal_zone_temperature_c` | `Failed`, **empty source** | `Failed`, source `MSAcpi_ThermalZoneTemperature` |
 | `network_down/up_bytes_per_sec` | `Available`, value `0.00` | `Failed` on the first cycle, then `Available` with a measured value |
-| `cpu_load_percent` | `Available 0.00` on a cycle with no elapsed time | `Failed` on a cycle with no elapsed time, `Available` with a measured value afterwards |
+| `cpu_load_percent` | `Available 0.00` on a cycle with no elapsed time | `Failed` on cycle 1 (no elapsed time for GetSystemTimes delta); `Available` from cycle 2 onward with the first measured value (elapsed time > 0) |
 
 The network figures are worth spelling out, because they were the clearest
 fabricated-zero defect. The network collector computes a *rate*, and a
@@ -222,10 +235,8 @@ The behaviour is covered by automated fixture coverage instead:
 
 ### 2.6 Widget lifecycle
 
-**Validated on the live host.** The card was pinned, resized, removed,
-re-added, duplicated and deactivated/reactivated in the real Widgets
-board. The provider is an out-of-process COM server, so the host
-activates it and the card is only rendered while the provider is alive.
+**Historical live-host observations (prior candidate)** (driven through UI Automation on the real Widgets board):
+The card was pinned, resized, removed, re-added, duplicated and deactivated/reactivated. These are not current-candidate lifecycle results. The provider is an out-of-process COM server, so the host activates it and the card is only rendered while the provider is alive.
 
 The observable used for "is the widget still being polled" is the
 provider process's **CPU time**, sampled over a window. The collection
@@ -275,6 +286,7 @@ recorded as gaps rather than as passes:
   rendered. On this machine the first paint was already populated, so
   the "empty first paint" path was not observed.
 
+**Automated test coverage** (not live-host evidence):
 The lifecycle contract is also covered by automated tests of the pipeline
 itself (`UpdatePipelineTests`, 14 tests), including:
 
@@ -292,13 +304,14 @@ exercised on the live host as described above, but it remains uncovered
 by automated tests, because the Windows App SDK's widget host cannot be
 stood up in the test host.
 
-**Validated on the live host** (activation, resize, refresh, deactivate,
-reactivate, remove, re-add, multiple instances); **not validated on
-hardware** (device switch, empty first paint).
+**Historical summary (prior candidate):** Live-host validated (activation, resize, refresh, deactivate,
+reactivate, remove, re-add, multiple instances); automated tests cover
+the pipeline lifecycle contract; not validated on hardware (device switch,
+empty first paint); COM activation path has no automated regression test.
 
 ### 2.7 Sleep / resume
 
-**Partially validated on the live host.** The machine was suspended with
+**Historical partial live-host validation (prior candidate).** The machine was suspended with
 `rundll32.exe powrprof.dll,SetSuspendState 0,1,0` and then resumed,
 with the card pinned and the provider running.
 
@@ -323,7 +336,7 @@ readings as stale rather than as current — is covered by automated tests
 `WidgetPayloadPresenterTests.AStaleSystemCollector_IsMarkedStale`), not
 by the live observation.
 
-**Partially validated on hardware** (the process survives, and the
+**Historical partial hardware validation (prior candidate)** (the process survives, and the
 collection resumes); the stale-reading behaviour is **fixture-covered**,
 and the transition itself is **not detected** by the widget.
 
@@ -344,21 +357,35 @@ The relevant behaviours are covered by automated fixture coverage:
 
 ### 2.9 GPU-memory label rendering
 
-**Validated in the live widget host.** The card was rendered in all three
+**Validated in the live widget host (prior candidate).** The card was rendered in all three
 sizes the host offers, and the rendered text runs were measured with UI
 Automation — their width, height and position — and captured as
-screenshots.
+screenshots. These observations were made against an earlier build of the
+widget (pre-Prompt-6). The **current** Prompt-6 candidate build was
+reinstalled, but the live host could not be driven for visual verification
+because the host process (msedgewebview2) blocks UI Automation tree
+traversal on this machine. Therefore, **visual fit for the current
+candidate is not tested on hardware**.
 
 The machine has one card whose memory figures come from its own
 dedicated-memory sensors (the NVIDIA RTX 2070 Super), and one integrated
 part with no memory sensors at all. So the **dedicated** heading and the
-**unavailable** case were both observed live:
+**unavailable** case were both observed on the prior candidate:
 
 | Size | Label rendered | Geometry | Figure rendered | Geometry |
 |---|---|---|---|---|
 | Small | *(none — see below)* | — | `1.0 GB` | w=38 h=19, one line |
 | Medium | `Dedicated GPU memory` | w=127 h=**16** — one line, no wrap | `1.0 GB / 8.0 GB (12.7%)` | w=137 h=19 — one line, fully visible |
 | Large | `Dedicated GPU memory` | w=127 h=**16** — one line, no wrap | `1.0 GB / 8.0 GB (12.7%)` | w=141 h=19 — one line, fully visible |
+
+**Manual checklist for current candidate (host not accessible):**
+- [ ] Pin the card in the Widgets board
+- [ ] Verify Small: GPU row shows `1.0 GB` (compact) on one line, no clipping
+- [ ] Verify Medium: heading `Dedicated GPU memory` one line (h=16), figure `1.0 GB / 8.0 GB (12.7%)` one line fully visible
+- [ ] Verify Large: same as Medium, figure fully visible
+- [ ] Verify all three sizes: no root-level actions array present
+- [ ] Verify Medium: disk figure shown as `607.4 GB (32.9%)` compact form
+- [ ] Verify Small: disk figure still present (compact)
 
 The label **policy** is separately covered by fixture:
 
@@ -506,6 +533,83 @@ been visible. The live host confirmed the interval refresh (§2.6).
 **The device switch is a documented limitation, not a validated
 behaviour.** It is recorded in §3 and §4 as well.
 
+### 2.12 Why the CPU temperature reads N/A
+
+The widget's CPU temperature shows `N/A` on the test machine. This
+section records what was actually observed, because "N/A" on its own
+does not say whether the sensor is missing, blocked, misnamed, lost in
+merging, or never read — and those need different answers.
+
+**The path, traced end to end on this machine:**
+
+| Stage | What was observed |
+|---|---|
+| Raw sensor enumeration | The CPU reports **19 Temperature sensors**: `Core Max`, `Core Average`, `CPU Core #1`…`#8`, `CPU Package`, and `CPU Core #N Distance to TjMax` × 8. All 19 are present. |
+| Sensor values | **Every one of the 19 reports a null value.** A standalone probe against the same library version (LibreHardwareMonitorLib 0.9.6, CPU only, unprivileged) shows the same: all 18 Load sensors read; all 19 Temperature sensors are `value=(null) raw=null`; all 8 Clock sensors are null; the Power sensors read 0.000. |
+| Selection | `CPU Package` — the **first** candidate in the preference list — is selected. The name is recognized; there is no name-matching failure. |
+| Mapping | The value is absent, so the measurement is `Failed`, source `LibreHardwareMonitor:CPU Package`. |
+| Merging | The merged scalar is `Failed`, with no value. Nothing is dropped in the merge. |
+| Presentation | `N/A`. |
+
+**The diagnosis is case 2** in the vocabulary the opt-in diagnostics use:
+*matching sensors are enumerated but report no usable value.*
+
+The other five cases were each ruled out against the live machine, not
+assumed away:
+
+| Case | Ruled out because |
+|---|---|
+| 1 — no sensor enumerated | 19 Temperature sensors are enumerated. |
+| 3 — names not recognized | `CPU Package` is candidate #1 and is selected. |
+| 4 — reading lost in merging | The device's own reading and the published scalar are both `Failed` with the same source. Nothing was lost. |
+| 5 — hardware update failed | The routine log records no `[LHM/update] failed` line; `hardware.Update()` did not throw for any node. |
+| 6 — backend unavailable | The routine log records `[LHM/initialize] ok elapsed=588.1ms` and `[LHM/read] ok elapsed=159.7ms devices=3`. |
+
+**Status:** CPU temperature remains **unavailable**; the access/driver cause is suspected (MSR read typically requires elevation), but the elevated comparison has **not** been performed. This document does not claim that elevation would fix the issue, nor that no unprivileged solution is possible. The null readings are an observed behaviour and an open question, not a confirmed root cause.
+
+**No sensor-name candidate was added**, because none was justified: the
+authoritative backend source shows the names this library actually
+produces (`CPU Package`, `Core (Tctl/Tdie)`, `Core (Tdie)`, `Core
+Average`, `Core Max`, `CCD1 (Tdie)`, `CCDs Average (Tdie)`, `P-Core #N` /
+`E-Core #N` on hybrid parts), and the candidate list already contains
+the ones this machine's sensor set needs. No readable temperature
+sensor on this machine is hidden behind an unrecognized name.
+
+**What was fixed in software.** Two defects in the *reporting* of the
+condition were found and fixed:
+
+1. **Retained aggregates.** LibreHardwareMonitor's Intel CPU path writes
+   `Core Average` and `Core Max` only when at least one per-core read
+   produced a value; when the per-core MSR read fails, those aggregates
+   **retain their previous value**. The library's own per-core and
+   package sensors are explicitly nulled, but the aggregates are not.
+   Without intervention the widget would have published a stale
+   aggregate as a freshly measured temperature. `LhmRetainedSensorPolicy`
+   marks such an aggregate as retained, and the mapper refuses to
+   publish a retained value as `Available` — it becomes `Failed`.
+2. **A misleading diagnosis.** The Intel integrated GPU's readable
+   `D3D Shared Memory Used` / `D3D Shared Memory Total` sensors were
+   reported as "case 3: readable sensors are enumerated but their names
+   are not recognized". They are *deliberately* excluded — shared system
+   memory is not video memory — so reporting them as an unrecognized
+   name pointed a maintainer at a gap in the candidate list that does
+   not exist. They are now reported separately as deliberately excluded.
+
+**The opt-in diagnostic output** now distinguishes all six cases and
+records, per metric: the sensor type required, the number of sensors of
+that type, the candidate names searched, the recognized / readable /
+excluded sensors with their values, the selected sensor, the measurement
+status, the source, the published value and status, the diagnosis, and
+the backend's own initialization and read state with a timestamp. It is
+written to the inventory export the user asks for, not to the routine
+log. The routine log carries the metric, the sensor type, the sensor
+count and the diagnosis — and no sensor name, no device identity and no
+exception message. A leak check over the routine log for `payto`,
+`10875H`, `intelcpu`, `VEN_10DE`, `VEN_8086`, `PCI\`, `Users\`, `i7-`
+and `/amd` returned **0** matches for each. (`/gpu-` matches only the
+operation names `collector/gpu-load`, `collector/gpu-temperature` and
+`collector/gpu-vram-windows`, not a device identity.)
+
 ---
 
 ## 3. Configuration matrix
@@ -518,13 +622,15 @@ behaviour.** It is recorded in §3 and §4 as well.
 | Intel integrated GPU + NVIDIA GPU | Yes | **Yes** — this is the test machine | **Tested** |
 | Mixed AMD/NVIDIA GPUs | Yes | No — no AMD hardware available | **Not tested** |
 | Standard-user execution | Yes | **Yes** — the whole session ran as a standard user, with no elevation requested by the app | **Tested** |
-| Unavailable / blocked sensor access | Yes | **Yes** — the CPU temperature is blocked on the test machine | **Tested** |
+| Unavailable / blocked sensor access | Yes | **Yes** — CPU temperature sensors enumerate and are selected correctly but report null under the tested unprivileged context (§2.12) | **Tested** |
+| CPU temperature under elevation | No | **No** — no elevated run has been performed; it requires the user's explicit approval and the widget does not elevate | **Not tested** |
 | Sleep / resume | Partial | **Partial** — the provider survives the suspend and the collection resumes; the transition itself is not detected | **Partially tested** |
 | Device removal / driver reset | Yes | No | **Not tested** |
 | Missing NVIDIA executable | Yes | No | **Not tested** |
-| Widget activate / deactivate / delete / restart | Partial (pipeline only) | **Yes** — activation, resize, refresh, deactivate, reactivate, remove, re-add and multiple instances were all driven on the live board | **Tested** |
-| GPU-memory heading rendering | Yes | **Partial** — "Dedicated GPU memory" was seen in Medium and Large; "Shared GPU memory" and "GPU memory" were not | **Partially tested** |
-| Small-layout presentation | Yes | **Yes** — the card was rendered and measured in all three sizes | **Tested** |
+| Widget activate / deactivate / delete / restart | Partial (pipeline only) | **Yes (live host, prior candidate)** — activation, resize, refresh, deactivate, reactivate, remove, re-add and multiple instances driven on live board | **Tested (prior candidate)** |
+| GPU-memory heading rendering | Yes | **Partial (prior candidate)** — "Dedicated GPU memory" seen in Medium/Large; "Shared GPU memory" and "GPU memory" not seen | **Partially tested (prior candidate)** |
+| Small-layout presentation | Yes | **Not tested on current candidate** — host process (msedgewebview2) blocks UI Automation; manual checklist in §2.9 | **Not tested (current candidate)** |
+| Visual fit in live host (current candidate) | Yes | **Not tested** — host inaccessible; see manual checklist in §2.9 | **Not tested** |
 | Long-running CPU, memory, child processes | Yes | **Partial** — CPU and memory yes; child processes by fixture | **Partially tested** |
 
 ### What "not tested" means here
@@ -573,6 +679,7 @@ This section lists what the automated suite covers. It is a record of the
 | Device selection | `WidgetSelectionTests`, `GpuSelectionPolicyTests` | A selection is stored against the instance id, never the display name; it survives a restart; it survives another selection; an unresolvable selection is ignored rather than treated as a choice. |
 | Live-host layout fit | `WidgetLayoutFitTests` | The properties that caused the observed live-host failures: the byte ladder has a megabyte tier and the two ladders cannot drift apart; the GPU row's memory column takes the space the narrow figures do not need; no template carries a root-level action row; the Medium card shows its disk and RAM figures in the compact one-line form; the Small card still names its disk figure. |
 | Diagnostics | `DiagnosticsTests` | The inventory describes the devices and metrics; exception messages are not leaked; paths are scrubbed. |
+| CPU-temperature diagnostics | `CpuTemperatureDiagnosticsTests` | The six cases an unavailable figure can have are told apart: no sensor enumerated, sensors enumerated but unreadable, readable sensors under unrecognized names, a valid reading lost in merging, a failed hardware update, and an unavailable backend. A preferred sensor that is unreadable falls back to a valid one; a readable but previously unrecognized sensor name is not selected and is diagnosed as case 3; a valid temperature survives merge and presentation ("84.0 °C"); an unreadable one is presented as "N/A", never as zero; a failed hardware update never refreshes an old reading's success timestamp; a retained aggregate is never published as a fresh reading; a shared-memory sensor is reported as deliberately excluded rather than as an unrecognized name. |
 
 ---
 
@@ -662,6 +769,16 @@ This section lists what the automated suite covers. It is a record of the
 11. **The generic-family case has not been observed on real hardware.** No
     available machine reports only "Memory Used" / "Memory Total", so the
     neutral "GPU memory" heading has never been seen on a real card.
+12. **The CPU temperature reads no value under the tested unprivileged
+   context, and the widget does not elevate.** The Intel MSR temperature
+   sensors enumerate and are selected correctly, but report null under a
+   standard user, so the card shows `N/A`. The underlying access or
+   driver limitation is suspected but has not been confirmed — elevation
+   has not been tested, so this document does not claim that elevation
+   would fix the issue, nor that no unprivileged solution is possible.
+   It is recorded here as an observed behaviour and an open question,
+   not as a confirmed root cause (§2.12 traces the path end to end on
+   the test machine).
 
 ---
 
@@ -682,11 +799,306 @@ Widgets board changes that:
 - **A device disappearing while it is presented.** No GPU was removed
   or had its driver reset.
 - **A machine where the CPU temperature is readable.** The test
-  machine's is blocked, so the "CPU temperature present" path has not
-  been rendered — the card shows `N/A`, which is the correct rendering
-  of an unavailable reading, but it is not the rendering of a present
-  one.
+  machine's temperature sensors enumerate but report null under the
+  tested unprivileged context, so the card shows `N/A`, which is the
+  correct rendering of an unavailable reading — it is not the rendering
+  of a present one. The cause of the null values has not been confirmed:
+  elevation has not been tested, so this document does not claim that
+  elevation would fix the issue, nor that no unprivileged solution is
+  possible. It is an observed behaviour and an open question (§2.12).
+- **A CPU whose temperature is stale-but-retained.** The retained-aggregate
+  defect in §2.12 is fixture-covered and was found by reading the
+  library's source, but no machine was observed producing a retained
+  aggregate, because the aggregate only retains a value if it once read
+  one — which needs the elevated access this session did not have.
 
 The fixtures for each of these are the evidence that the *logic* is
 right. They are not evidence that the rendering is right, and this
 document does not present them as such.
+
+---
+
+## Suggested commit message (when ready to commit)
+
+```
+Validate Prompts 3–5 in the live Windows widget host
+
+This commit packages the combined Prompts 3–5 candidate and validates it
+against the real Windows widget host on the test machine
+(Intel Core i7-10875H, NVIDIA RTX 2070 Super, Intel UHD Graphics).
+
+Validated on hardware (live host, prior candidate):
+- Widget lifecycle: activation, resize (Small/Medium/Large), interval
+  refresh, deactivate/reactivate (board close/reopen), remove/re-add,
+  multiple instances — all driven through UI Automation.
+- GPU memory label rendering: "Dedicated GPU memory" heading and figure
+  rendered on one line in Medium and Large; Small shows compact used
+  figure only.
+- Layout defects D1–D5 fixed and re-verified: disk row no longer clipped,
+  storage value visible, GPU-memory figure in MB/GB (not KB ellipsized),
+  heading one line, action row removed.
+- Sleep/resume: provider process survives, collection resumes.
+- CPU temperature remains unavailable (N/A) — sensors enumerate and are
+  selected correctly but report null under unprivileged context; access/
+  driver cause suspected but elevated comparison NOT performed.
+
+Not validated on current candidate (host process blocks UI Automation):
+- Visual fit in live host — manual checklist provided in §2.9.
+
+Fixture-covered (automated tests, 594 pass):
+- All sensor selection, conversion, mapping, merge precedence, GPU-memory
+  compatibility and labeling, pipeline lifecycle, NVIDIA fallback, payload
+  normalization, template bindings, CPU-temperature diagnostics.
+
+Known gaps (unchanged): AMD hardware, device switch, sleep/resume transition
+detection, device removal/driver reset, missing NVIDIA executable,
+CPU temperature under elevation, COM activation path has no automated test.
+```
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+
+---
+
+## Current combined candidate verification — 2026-10-23
+
+This section records the earlier package comparison and user-supplied screenshots. A fresh build
+during the final source acceptance review produced a different `SystemMonitor.dll` hash than the
+installed package; see the final checkpoint below. The screenshots' capture time and linkage to
+either artifact are unknown, and the live card remains inaccessible to UI Automation in this
+session.
+
+### Candidate and machine identity
+
+- Checkout: commit `a6fa325ebe4cb8bd1a38fa870aac1cfc4b24ac6e`; **dirty** (modified tracked files,
+  one deleted tracked file, and untracked source/test/build artifacts).
+- OS: Windows 11 Home, build `26200`, 64-bit; machine: Razer Blade 15 Advanced Model (Early 2020),
+  x64.
+- CPU: Intel Core i7-10875H, 8 cores / 16 logical processors.
+- GPUs: Intel UHD Graphics and NVIDIA GeForce RTX 2070 Super with Max-Q Design.
+- Displays: primary `\\.\DISPLAY4`, 1920×1080 at `(0,0)`, 96 DPI (100%); secondary
+  `\\.\DISPLAY5`, 1080×1920 at `(-1080,-144)`, 96 DPI (100%). Display facts were queried through
+  Windows Forms and `GetDpiForMonitor`; no display settings were changed.
+
+### Build, tests, and installed-artifact comparison
+
+Commands run on this checkout:
+
+```powershell
+dotnet test SystemMonitor.Tests/SystemMonitor.Tests.csproj
+dotnet build SystemMonitor/SystemMonitor.csproj -c Release -r win-x64
+dotnet publish SystemMonitor/SystemMonitor.csproj -c Release -r win-x64 -o build/current-publish-check /p:SelfContained=false
+```
+
+Results: **598 tests passed, 0 failed, 0 skipped**. The test build emitted existing Windows-only
+CA1416 analyzer warnings for WMI APIs. The Release `win-x64` build succeeded with **0 warnings and
+0 errors**. Publish succeeded. The suite is VSTest/xUnit v2 (`Microsoft.NET.Test.Sdk` plus
+`xunit.runner.visualstudio`); no MTP configuration is present.
+
+The installed package is `com.test.systemmonitor_1.0.0.1_x64__1b7q5sa4bwdpa` (version `1.0.0.1`,
+package family `com.test.systemmonitor_1b7q5sa4bwdpa`) at
+`C:\Program Files\WindowsApps\com.test.systemmonitor_1.0.0.1_x64__1b7q5sa4bwdpa`. It is the
+registered `com.test.systemmonitor` package. Its signature verified as `CN=Developer`, thumbprint
+`C78FF8061C1C124809996A6CFF2996B7DEF7E24F`. The running `SystemMonitor.exe` provider process
+(PID 16548) resolves to this package's install path. The Widgets board process (PID 4064) also
+exists, but its process has no main window handle in this session.
+
+Full SHA-256 comparison:
+
+| Object compared | Size | SHA-256 |
+|---|---:|---|
+| Earlier publish from the package comparison: `build/publish-temp/SystemMonitor.dll` | 745,472 | `892B39609ABE6F85171FFDAD2FD7C8101D92155399A2874BF2D9AC420A9B4921` |
+| Installed DLL: `...1.0.0.1_x64__1b7q5sa4bwdpa/SystemMonitor.dll` | 745,472 | `892B39609ABE6F85171FFDAD2FD7C8101D92155399A2874BF2D9AC420A9B4921` |
+| Package root: `build/package-root/SystemMonitor.dll` | 745,472 | `892B39609ABE6F85171FFDAD2FD7C8101D92155399A2874BF2D9AC420A9B4921` |
+| Signed package: `build/msix-output/SystemMonitor.msix!SystemMonitor.dll` | 745,472 | `892B39609ABE6F85171FFDAD2FD7C8101D92155399A2874BF2D9AC420A9B4921` |
+
+Those four artifacts matched at the time of that comparison, and `Get-AuthenticodeSignature`
+reported a valid MSIX signature. That comparison does not establish correspondence to the later
+fresh source build recorded below, or that every package file is identical to the package root.
+No certificate trust change was made in this validation run.
+
+The user reports running the packaging/install commands; no install/update command was run by the
+assistant in this validation pass.
+
+### Current-candidate host observations
+
+| Size | Current candidate observation | Result |
+|---|---|---|
+| Small | User-provided card screenshot; CPU/GPU/RAM/Disk four rows all visible, with RAM `14.3 / 15.9 GB`, Disk `0.61 / 1.8 TB`, GPU memory `0.99 / 8 GB`; zero GPU load and N/A CPU temperature are distinguishable | **Visible fit in supplied image.** Screenshot inspection only; capture scaling/host provenance is unconfirmed. Small has no separate GPU-memory label in this compact layout. |
+| Medium | User-provided card screenshot; compact CPU/GPU names, RAM/disk totals, `Dedicated memory` label/value, and Intel secondary row visible; GPU heading wraps, but storage remains visible | **Visible fit in supplied image.** Screenshot inspection only; capture scaling/host provenance is unconfirmed. |
+| Large | User-provided card screenshot; CPU/GPU/RAM/Disk and Download/Upload sections visible; dedicated GPU-memory label/value, eligible Intel secondary row, and two network columns; no Sample heading or timestamp | **Visible fit in supplied image.** Screenshot inspection only; capture scaling/host provenance is unconfirmed. |
+| Stale notice | Small/Medium/Large physical layout, especially Small capacity fit | **Not tested**; automated binding/template fixture coverage is separate evidence |
+| Lifecycle | Activation, resize, deactivate/reactivate, remove/re-add, multiple instances, sleep/resume | **Not tested** on the current candidate |
+
+`./build/widget-board-probe.ps1 -ReadOnly` failed with “The Widgets board window was not found.”
+`./build/widget-desktop-dump.ps1 -MaxDepth 3` returned no accessible Widgets UI Automation
+elements. Opening `ms-widgetboard:` did not expose a board window to the probes. The three
+user-supplied screenshots are visual evidence for the named layouts, but the capture method/time
+and whether the screenshots were captured directly from the installed live host are not recorded
+here; treat host provenance as provisional. No assistant-captured live card inspection was
+available. The installed provider was not terminated, and display settings were not changed.
+
+### Measurements and GPU behavior
+
+The screenshots show CPU utilization (7.7–10.0% in Small/Large and 8.9% in Medium), with CPU
+temperature `N/A`; the historical standard-user observation that recognized sensors returned null
+is consistent. No elevation comparison was performed. They show the NVIDIA RTX 2070 Super with
+Max-Q as the displayed primary GPU with load, temperature (58–59°C), and dedicated memory
+(0.99–1.06 / 8 GB); the Intel UHD integrated GPU appears as a secondary row with readable `0.0%`
+load and N/A temperature. This is visible attribution evidence, not a separately instrumented
+selection-reason trace. The screenshots also show RAM/disk totals and balanced Download/Upload
+columns in Large. The Small screenshot preserves zero vs N/A; its compact GPU-memory field is
+unlabeled, while Medium/Large visibly label dedicated memory.
+
+The screenshots demonstrate that the readable zero-load Intel secondary row is rendered. GPU
+selection reason and the three-unusable-cycle grace/fourth-cycle removal behavior remain
+automated-test evidence only. No physical sensor was disrupted to exercise them.
+
+Freshness semantics: aggregate `sampleIsStale` is true when the newest successful reading is more
+than 30 seconds old at publication. CPU/GPU load, clock, and temperature presentation checks each
+measurement's own timestamp; stale fields are indicated individually. The immutable snapshot's
+original values, statuses, and timestamps are preserved. Stale-notice visual fit remains **not
+tested**: the supplied screenshots show normal telemetry and no stale notice. Aggregate and
+per-measurement binding coverage is automated evidence, not visual-host evidence. A host card
+changes only after another publication; advancing time alone does not update it.
+
+### Blocker and next safe step
+
+The earlier package comparison matched its publish, package-root, and installed DLLs. The later
+fresh source build does not match that installed DLL. The supplied screenshots show normal-state
+layout fit for all three sizes, but their provenance is not independently established. Stale-notice fit and live
+lifecycle callbacks remain untested; no live resize, deactivation/reactivation, remove/re-add,
+multiple-instance, or sleep/resume scenario is established by static card screenshots.
+
+---
+
+## Final source acceptance checkpoint — 2026-10-23
+
+### Source identity and checkpoint state
+
+- Repository: `E:\Code\SystemMonitor`; branch `main`; HEAD
+  `a6fa325ebe4cb8bd1a38fa870aac1cfc4b24ac6e`.
+- Checkout is dirty: 24 tracked modifications, one tracked deletion, and 21 untracked paths
+  (including the new production/test sources, diagnostics, and scratch projects). No commit was made.
+- The implementation sequence is the source/test work listed below. No package installation,
+  registration, signing, or host-setting changes were made during this acceptance review.
+
+### Current verification
+
+Working directory for all commands: repository root, `E:\Code\SystemMonitor`.
+
+```powershell
+dotnet test SystemMonitor.Tests/SystemMonitor.Tests.csproj
+dotnet test SystemMonitor.Tests/SystemMonitor.Tests.csproj --no-restore /t:Rebuild
+dotnet build SystemMonitor/SystemMonitor.csproj -c Release -r win-x64
+git diff --check
+```
+
+The initial suite and forced-rebuild suite each completed with **598 passed, 0 failed, 0 skipped**.
+The final `--no-restore` run also passed 598/598 and emitted CA1416 analyzer warnings for WMI APIs
+compiled into the cross-platform test target. The Release `win-x64` build succeeded with **0
+warnings and 0 errors**. `git diff --check` reported no whitespace errors; Git separately printed
+LF-to-CRLF working-copy warnings for modified files. An initial attempt to force rebuilding with `-t:Rebuild` failed with MSB1008
+because MSBuild parsed `Rebuild` as an additional project; the corrected `/t:Rebuild` command above
+completed successfully.
+
+### Source/artifact correspondence
+
+The freshly built source DLL is
+`SystemMonitor/bin/Release/net8.0-windows10.0.22000.0/win-x64/SystemMonitor.dll`, SHA-256
+`525B01ACC41EB97E51C99579EB258528BCFA47523A3B430EA7D49C678E3B831A`. Read-only inspection found
+the installed package `com.test.systemmonitor_1.0.0.1_x64__1b7q5sa4bwdpa`, with the running provider
+PID 16548 at that package's install path. Its installed `SystemMonitor.dll` SHA-256 is
+`892B39609ABE6F85171FFDAD2FD7C8101D92155399A2874BF2D9AC420A9B4921`, so it does **not** match
+the current source build. The existing MSIX signature is valid and reports signer `CN=Developer`.
+No install/update was run. The supplied screenshots therefore remain provisional and are not
+attributed to this current source build. These DLL checks concern only `SystemMonitor.dll`; they do
+not prove identity of all package contents.
+
+### Acceptance matrix
+
+| Area | Automated evidence | Live/historical/provisional evidence | Current status / accepted limitation |
+|---|---|---|---|
+| CPU temperature | Sensor selection, diagnostics, merge/retained-value and presentation cases are in the test suite | Screenshots show N/A; prior standard-user diagnostics found recognized Intel sensors unreadable | Observed standard-user limitation; elevation comparison is unperformed; access/driver cause is not confirmed |
+| CPU load | Collector and presenter behavior covered by tests | Screenshots show utilization; prior hardware observations found first-sample baseline behavior | Values visible in supplied screenshots; no new live collector trace in this review |
+| Capacity and names | Formatting, compatibility, payload normalization and layout/template assertions | User-supplied screenshots show required capacities and compact names fitting in all three sizes | Provisional screenshot evidence; Small GPU-memory figure is compact/unlabeled by design |
+| GPU selection, attribution and grace | Policy, tracking, reconciliation, memory compatibility and grace integration tests | Screenshots show NVIDIA primary telemetry and Intel secondary 0.0% | Visible attribution is provisional; selection reason and failure/grace transitions are not physically observed now; manual picker is unavailable |
+| Freshness | Advancing-time presentation, aggregate stale notice, per-measurement stale fields and immutable snapshot coverage are automated-tested | Normal screenshots do not show stale state | Stale-notice visual fit is not tested; aggregate flag is newest successful reading >30 seconds old at publication; CPU/GPU measurements age independently; snapshots retain values/statuses/timestamps; card changes only after publication |
+| Layout | Template bindings and layout fit are automated-tested | Three user-supplied normal-state screenshots; machine display scaling is recorded as 100%, but capture conditions are unknown | Provisional visible fit; screenshot time/host linkage unknown; stale-state fit untested |
+| Lifecycle and sleep/resume | Coordinated pipeline lifecycle and cancellation coverage | Older report sections describe prior-candidate live observations | Current candidate callbacks and sleep/resume are not tested; prior observations are historical only |
+| Packaging/identity | Release architecture build only | Existing installed package identity/signature inspected; installed DLL hash differs from fresh source build | No current-source installation validation; self-signed development packaging is not a distribution release |
+
+### Change groups and review files
+
+- Collection, mapping, diagnostics and protection: `Models/HardwareModels.cs`;
+  `Services/SystemMetricsService.cs`, `Services/LhmSensorSelection.cs`,
+  `Services/LhmSensorSource.cs`, `Services/LhmSnapshotMapper.cs`,
+  `Services/LibreHardwareMonitorSource.cs`, `Services/LhmSensorDiagnostics.cs`,
+  `Services/LhmRetainedSensorPolicy.cs`.
+- GPU policy, tracking and attribution: `Services/GpuSelectionPolicy.cs`,
+  `Services/GpuSelectionTracker.cs`, `Services/GpuExtrasTracker.cs`,
+  `Services/GpuMemoryPresentation.cs`.
+- Formatting, payload, templates and host wiring: `Services/ByteFormatter.cs`,
+  `Services/LegacyPayloadPresenter.cs`, `Services/WidgetPayloadPresenter.cs`,
+  `Services/WidgetTemplates.cs`, `Services/SystemMonitorWidgetProvider.cs`,
+  `SystemMonitor/Program.cs`.
+- Tests: modified `SystemMonitor.Tests/GpuMemoryLabelTests.cs`,
+  `SystemMonitor.Tests/WidgetLayoutFitTests.cs`,
+  `SystemMonitor.Tests/WidgetPayloadPresenterTests.cs`,
+  `SystemMonitor.Tests/SystemMonitor.Tests.csproj`; new tracker, integration,
+  diagnostics, formatting, and normalization test files listed in `git status`.
+- Documentation: `README.md` (corrected feature/backend and automatic-selection summary),
+  `docs/hardware-validation.md`, `docs/refactor-plan.md`, `docs/build-and-package.md`.
+
+Before committing, review the full staged/unstaged implementation diff, in particular the collection
+and tracking changes, the test project package references, and the historical/current evidence
+labels in the documentation. The modified test project links production source files explicitly;
+the current full build and suite pass, with no duplicate-compile build error.
+
+The added test-project package references for `System.Management`,
+`System.Diagnostics.PerformanceCounter`, `System.Security.Permissions`, and
+`LibreHardwareMonitorLib` mirror production dependencies for the linked
+sources. The final build/test proves they resolve, not that every direct
+reference is irreducible: no package-removal experiment was run.
+
+### Untracked and sensitive artifacts
+
+Untracked machine-specific diagnostic exports are under `build/inventory-*.txt`; the probe source
+and captured output are under `build/lhmprobe/`. Scratch `TestArray*` files are unrelated to the
+widget implementation. They remain untracked and were not deleted in this review. The tracked
+`Services/WidgetTemplates.cs.probe-backup` is deleted in the current checkout.
+
+An ignored `build/msix-output/testcert.pfx` exists. It is untracked/ignored signing material that
+contains a private key; its contents were not read or printed. Keep it out of any commit. No
+credential rotation, certificate removal, or cleanup was performed. The source build output and
+installed package DLL are the only source/artifact correspondence compared in this review; the
+current source was not repackaged or installed.
+
+Ignored generated publish/package output is also present under `build/publish-temp/`,
+`build/package-root/`, and `build/msix-output/`; do not stage those outputs as source. No generated
+binary or package was deleted during this review.
+
+### Remaining work classification
+
+- **Demonstrated blockers for an installed-current-source candidate:** the installed provider DLL
+  differs from the fresh build; installation/update is outside this review and requires user
+  approval.
+- **Accepted limitations:** standard-user CPU temperature is N/A on the tested hardware; manual
+  GPU picker and refresh control are absent; development signing is self-signed.
+- **Validation gaps:** screenshot provenance, current-candidate stale-notice fit and live lifecycle
+  callbacks, elevated CPU-temperature comparison, AMD hardware, and physical GPU grace transitions.
+- **No additional implementation defect was demonstrated by this acceptance review.**
+
+Suggested commit message (do not execute):
+
+```
+Harden telemetry collection and widget presentation
+
+Protect sensor snapshots and retained readings, track GPU telemetry by device,
+and present compact capacity and freshness-aware widget fields. Add collection,
+selection, formatting, diagnostics, and presentation regression coverage.
+
+Verified: 598 tests pass; Release win-x64 build succeeds with zero warnings
+and errors. Current installed-host DLL differs from the source build, and
+visual screenshots remain provisional; no current-host lifecycle or stale
+notice fit is claimed.
+```

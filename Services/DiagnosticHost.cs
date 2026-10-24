@@ -226,18 +226,22 @@ namespace System_Monitor.Services
         /// <param name="args">The command-line arguments.</param>
         /// <param name="snapshot">The snapshot to describe, or null.</param>
         /// <param name="log">The log to report the export to, or null.</param>
+        /// <param name="sensorReport">
+        /// The sensor backend's state and per-device traces, or null.
+        /// </param>
         /// <returns>The path written, or null when no export was requested.</returns>
         public static string? ExportIfRequested(
             string[]? args,
             MetricsSnapshot? snapshot = null,
-            DiagnosticLog? log = null)
+            DiagnosticLog? log = null,
+            LhmSensorBackendReport? sensorReport = null)
         {
             if (!TryGetExportRequest(args, out var path) || path is null)
                 return null;
 
             try
             {
-                return DiagnosticInventory.Write(snapshot, path, log);
+                return DiagnosticInventory.Write(snapshot, path, log, sensorReport);
             }
             catch (Exception ex)
             {

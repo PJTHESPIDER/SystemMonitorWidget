@@ -44,6 +44,7 @@ namespace System_Monitor.Services
 
         private readonly SystemMetrics _metrics;
         private static readonly TimeSpan UpdateInterval = TimeSpan.FromSeconds(5);
+        private static readonly TimeProvider Clock = TimeProvider.System;
 
         private static SystemMetricsService? _metricsService;
         private static UpdatePipeline<WidgetSize>? _pipeline;
@@ -309,7 +310,8 @@ namespace System_Monitor.Services
                         RunningWidgets,
                         BuildPayloadFromSnapshot,
                         PublishToWidget,
-                        UpdateInterval);
+                        UpdateInterval,
+                        Clock);
                 }
 
                 _pipeline.Start();
@@ -396,7 +398,7 @@ namespace System_Monitor.Services
                 var template = WidgetTemplates.BuildTemplate(ToLayoutSize(widget.Size));
 
                 var data = WidgetPayloadPresenter
-                    .Present(snapshot, selectionId)
+                    .PresentForPublication(snapshot, selectionId, Clock)
                     .ToJson();
 
                 var updateOptions = new WidgetUpdateRequestOptions(widget.WidgetId)

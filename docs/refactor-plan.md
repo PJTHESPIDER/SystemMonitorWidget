@@ -1,9 +1,9 @@
 # SystemMonitorWidget — Refactor Plan
 
-**Status:** Measurement bugs fixed; manufacturer-neutral model and immutable snapshots in place; read-only LibreHardwareMonitor sensor backend integrated; single non-overlapping update pipeline in place; NVIDIA command-line collection retained as a bounded, reconciled fallback; GPU-memory compatibility and labelling in place. Build and tests green. **Validated in the live Windows widget host** (2026-10-21): the card was pinned, rendered and measured in all three sizes, and driven through resize, deactivate/reactivate, remove/re-add and multiple instances. The action row was removed after the host was found never to render it.
+**Status:** Implementation sequence is present in the dirty working tree; manufacturer-neutral snapshots, the coordinated update pipeline, telemetry-aware GPU selection, diagnostics, compact formatting, and freshness-aware presentation are implemented. The current full test suite passes (598/598) and the Release `win-x64` build succeeds. **Historical live-host observations** (2026-10-21) covered the then-installed candidate in all three sizes and lifecycle operations; they are not current-source host validation. The latest supplied screenshots are provisional, and the installed provider DLL does not match the current source build. See `docs/hardware-validation.md` for the final acceptance checkpoint.
 **Baseline build:** `dotnet build SystemMonitor/SystemMonitor.csproj -c Release -r win-x64` — succeeded, 0 warnings, 0 errors.
-**Tests:** `SystemMonitor.Tests` — 415 tests pass (thermal conversion, network delta, interface policy, hardware models, immutable snapshots, legacy presenter, LHM sensor selection/conversion/mapping, update-pipeline lifecycle, NVIDIA command-line fallback, GPU-memory compatibility and labelling, live-host layout fit).
-**Last audited against the checkout:** 2026-10-21 (commit `eb2568e`, plus the uncommitted live-host validation work).
+**Tests:** `SystemMonitor.Tests` — 598 tests pass as of 2026-10-23 (including thermal conversion, network delta, sensor selection/mapping, pipeline lifecycle, GPU tracking/grace, diagnostics, formatting, payload freshness, and template coverage).
+**Last audited against the checkout:** 2026-10-23 (HEAD `a6fa325ebe4cb8bd1a38fa870aac1cfc4b24ac6e`, dirty working tree).
 **Working directory:** `E:\Code\SystemMonitor`
 
 > **Note on sections 1–3.** Section 1 describes the flows as they are implemented *now*. Section 2
@@ -108,6 +108,20 @@ The provider owns no timer and no collection loop. It holds a `WidgetRegistry<Wi
 - Calls `StopPipeline()` and disposes the metrics service. This is the best-effort synchronous path; `ShutdownAsync()` is the preferred shutdown route.
 
 **Static helpers** `WaitForCompletion()` / `GetEmptyWidgetListEvent()` — used by `Program.Main` to block until widget activity ends.
+
+### 1.3a Publication-time freshness
+
+`SystemMonitorWidgetProvider.UpdateWidget` is the production presentation boundary. It calls
+`WidgetPayloadPresenter.PresentForPublication(snapshot, selectionId, Clock)` using the same
+`TimeProvider.System` instance supplied to `UpdatePipeline`; the check therefore uses real
+publication time while reusing the existing five-second pipeline. It does not start another loop.
+The aggregate `sampleIsStale` flag means the newest successful reading in the immutable snapshot
+is more than 30 seconds old at presentation time. Each CPU/GPU load, clock and temperature field
+is also checked against its own `LastSuccessfulUpdate`; a field older than 30 seconds displays
+`stale` while the original value, status and timestamp remain unchanged. Small, Medium and Large
+templates bind an exceptional `Telemetry is stale` notice to `sampleIsStale`. A card changes only
+when the host receives another publication; advancing wall-clock time alone cannot update a
+rendered host card.
 
 ### 1.4 Metrics collection — `Services/SystemMetricsService.cs`
 
@@ -335,7 +349,7 @@ Two kinds of key, kept apart because they are used differently:
 | `gpuDevicePresent` | flag | whether a GPU is presented | Consumed by `$when` |
 | `gpuHasExtra` | flag | whether any additional device is described | **Not bound by any template** |
 | `gpuSelectionMissing` | flag | the selected device is gone | Consumed by `$when` |
-| `sampleIsStale` | flag | the newest successful reading is older than the sample | **Not bound by any template** |
+| `sampleIsStale` | flag | the newest successful reading is more than 30 seconds old at publication time | Bound by all sizes to an exceptional stale notice |
 | `ram` | text | "used / total (pct)" | |
 | `ramUsed` / `ramTotal` / `ramCombined` / `ramPercent` / `ramCompact` | text | RAM figures | |
 | `disk` | text | "used / total (pct)" | |
@@ -1068,9 +1082,8 @@ card a widget showed. They are gone.
   sensor is "N/A" — never zero. A value that is known but older than the current collection is
   "stale". No raw exception text ever reaches the payload.
 - **The timestamp is the last successful sample,** not the time the payload was published.
-  `sampleIsStale` is set when the newest successful reading is older than the collection,
-  but no template binds it — the "stale" marker on an individual figure carries that
-  information today.
+  `sampleIsStale` is evaluated at publication time and drives the exceptional notice bound
+  by all three templates. Individual CPU/GPU figures are independently checked by age.
 
 ### Selection
 
@@ -1524,9 +1537,8 @@ production-path defect.
    `acpiThermalZoneTemp`, `lastUpdated`, and the flags `gpuHasExtra` and
    `sampleIsStale`. The GPU clock is projected as a per-device reading but
    is never surfaced either. These are not defects — a payload that
-   carries more than the template needs is harmless — but they are dead
-   weight, and `sampleIsStale` in particular is a status a template could
-   use to show that a figure is out of date.
+   carries more than the template needs is harmless. `sampleIsStale` is now
+   consumed by the three exceptional stale notices.
 
 5. **The mutable `SystemMetrics` model still uses non-nullable primitives**
    for the system-level figures. It cannot express the difference between a
@@ -2056,14 +2068,19 @@ cycle succeeded), so the presenter renders it as "N/A" — never as
 | A percentage that was not computed is "N/A", and the combined figure carries no percentage | `APercentageThatWasNotComputed_IsUnavailableRatherThanZero` |
 | A measured zero percentage is "0.0%" | `AMeasuredZeroPercentage_IsPresentedAsZero` |
 
-The suite is **415 tests, all passing**.
+The suite at this **2026-10-22 checkpoint** was 445 tests, all passing. The later final acceptance
+run passed 598 tests; see `docs/hardware-validation.md` for its exact commands and source/package
+comparison.
 
 ### Verification performed
 
 - `dotnet build SystemMonitor.sln -p:Platform=x64 -v q --nologo` —
   succeeded, 0 warnings, 0 errors.
 - `dotnet test SystemMonitor.Tests/SystemMonitor.Tests.csproj --nologo -v q` —
-  `Passed! - Failed: 0, Passed: 415, Skipped: 0, Total: 415`.
+  `Passed! - Failed: 0, Passed: 445, Skipped: 0, Total: 445` at this
+  2026-10-22 CPU-diagnostics checkpoint. The later final acceptance run is
+  598/598; see `docs/hardware-validation.md` for its exact commands and
+  current source/package comparison.
 
 **No live-host or physical-hardware validation was performed for this
 change.** The reasoning above is static analysis plus fixture tests. The
@@ -2131,6 +2148,185 @@ the NaN the helper silently converted into a measured 0 %.
 
 No live-host or physical-hardware validation was performed: the defect
 was latent, so there was no observable behaviour to reproduce.
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+```
+
+## CPU temperature: why the card shows N/A (2026-10-22)
+
+### The question
+
+The widget's CPU temperature displays `N/A`. The task was to determine
+why, and to fix a demonstrated software defect if one exists — without
+assuming it was a conversion bug or a permissions problem.
+
+### What was found
+
+The CPU temperature is **not** a software defect in the collection path.
+Nothing is lost or mis-converted along it: the Intel CPU enumerates 19
+Temperature sensors — `Core Max`, `Core Average`, `CPU Core #1`…`#8`,
+`CPU Package`, and eight `Distance to TjMax` sensors — **all 19 report a
+null value** under a standard user. The selection picks `CPU Package`
+(the first candidate), the mapping turns the absent value into `Failed`,
+the merge carries that status through, and the presenter renders `N/A`.
+
+The observed behaviour — sensors that enumerate but report null under the
+tested unprivileged context — is consistent with an access or driver
+limitation (for example MSR access that typically requires elevation),
+but it is **not confirmed**: elevation has not been tested, so this
+document does not claim that elevation would fix the issue, nor that no
+unprivileged solution is possible. It is recorded as an observed
+behaviour and an open question. The full trace, the six-case diagnosis
+vocabulary, and the evidence from the live machine and the unprivileged
+probe are in `docs/hardware-validation.md` §2.12.
+
+### The two software defects that were found and fixed
+
+**1. Retained aggregates were publishable as fresh readings.**
+LibreHardwareMonitor's Intel CPU path writes the `Core Average` and
+`Core Max` aggregates only when at least one per-core read produced a
+value; when the per-core MSR read fails, those aggregates **retain their
+previous value**. The library's per-core and package sensors are
+explicitly nulled on failure — the aggregates are not. Without
+intervention, the widget would have published a stale aggregate as a
+temperature measured on this cycle.
+
+`Services/LhmRetainedSensorPolicy.cs` marks an aggregate as retained
+when every per-core input is unreadable, and `LhmSnapshotMapper` refuses
+to publish a retained value as `Available` — it becomes `Failed`. This
+is the rule "if a hardware update fails, do not stamp retained values
+as newly read", enforced at the only place that knows which node failed
+to update.
+
+**2. The diagnostics misdiagnosed a deliberate exclusion.**
+The Intel integrated GPU's readable `D3D Shared Memory Used` /
+`D3D Shared Memory Total` sensors were reported as *"case 3: readable
+sensors are enumerated but their names are not recognized"*. They are
+deliberately excluded — shared system memory is not video memory — so
+that diagnosis pointed a maintainer at a gap in the candidate list that
+does not exist. They are now reported separately, as deliberately
+excluded, via `LhmSensorSelection.IsDeliberatelyExcluded` and the new
+`LhmSensorDiagnosis.SensorDeliberatelyExcluded`.
+
+### The diagnostics that were added
+
+`Services/LhmSensorDiagnostics.cs` defines a diagnosis vocabulary that
+tells the six cases apart — no sensor enumerated, sensors enumerated but
+unreadable, readable sensors under unrecognized names, a valid reading
+lost in merging, a failed hardware update with retained values, and an
+unavailable backend — plus the per-metric trace behind them: the sensor
+type required, the sensor count, the candidate names searched, the
+recognized / readable / excluded sensors with their values, the selected
+sensor, the measurement status, the source, and the backend's
+initialization and read state with a timestamp.
+
+The trace is written into the **opt-in** inventory export, never into
+the routine log. The routine log carries the metric, the sensor type,
+the sensor count and the diagnosis — no sensor name, no device identity,
+no exception message. A leak check over the routine log returned 0
+matches for every identity pattern tried.
+
+### No sensor-name candidate was added
+
+The authoritative backend source was consulted for the names this
+library actually produces (`CPU Package`, `Core (Tctl/Tdie)`,
+`Core (Tdie)`, `Core Average`, `Core Max`, `CCD1 (Tdie)`,
+`CCDs Average (Tdie)`, `P-Core #N` / `E-Core #N` on hybrid parts). The
+candidate list already contains the names this machine's sensor set
+needs, and no readable temperature sensor on this machine is hidden
+behind an unrecognized name. Adding a candidate "only when actual output
+or authoritative backend behavior supports it" therefore meant adding
+none.
+
+### The deliverable
+
+**Observed behavior:** CPU temperature returns no value under the tested
+standard-user execution on this machine. Whether an elevated run of the
+same library version would read the same `CPU Package` sensor is unknown.
+That run requires the user's explicit approval and has not been performed.
+It would not change the widget's behaviour: the widget does not elevate,
+and its manifest is not modified.
+
+A correctly explained `N/A` is preferable to an invented temperature,
+and that is what this produces.
+
+### Verification performed
+
+- `dotnet build SystemMonitor.sln -p:Platform=x64 -v q --nologo` —
+  succeeded, 0 warnings, 0 errors.
+- `dotnet build SystemMonitor.sln -p:Platform=x86 -v q --nologo` —
+  succeeded, 0 warnings, 0 errors.
+- `dotnet build SystemMonitor/SystemMonitor.csproj -p:Platform=ARM64 -v q
+  --nologo` — succeeded, 0 warnings, 0 errors.
+- `dotnet test SystemMonitor.Tests/SystemMonitor.Tests.csproj --nologo -v q` —
+  `Passed! - Failed: 0, Passed: 445, Skipped: 0, Total: 445` at the
+  2026-10-22 CPU-diagnostics checkpoint; the final 2026-10-23 review ran
+  598 tests. See `docs/hardware-validation.md` for current commands and
+  source/package correspondence.
+- Live diagnostic export from the built x64 binary
+  (`SystemMonitor.exe --export-diagnostics <path>`) — the `[sensor
+  trace]` section shows `selected_sensor: CPU Package`,
+  `measurement_status: Failed`, `published_status: Failed`,
+  `diagnosis: case 2: matching sensors are enumerated but report no
+  usable value`, and the iGPU memory metrics now read *"the only
+  readable sensors of this type were deliberately excluded"*.
+- Live routine log — the corrected diagnosis appears, and a leak check
+  for `payto`, `10875H`, `intelcpu`, `VEN_10DE`, `VEN_8086`, `PCI\`,
+  `Users\`, `i7-` and `/amd` returned 0 matches each. (`/gpu-` matches
+  only the operation names, not a device identity.)
+
+**Hardware validation performed:** the diagnostic export and the routine
+log above were produced on the test machine. **No elevated run was
+performed**, and no live widget-host rendering of a *present* CPU
+temperature has been observed.
+
+### Suggested commit message (when ready to commit)
+
+```
+Explain why the CPU temperature is unavailable, and stop publishing retained readings
+
+The card showed N/A for the CPU temperature. The cause is not a defect
+in the collection path: the Intel temperature sensors enumerate and are
+selected correctly, but report null under the tested unprivileged
+context. Whether an access or driver limitation explains this — and
+whether elevation would change it — is not confirmed: elevation has not
+been tested.
+
+Two software defects around that condition were found and fixed.
+
+- LibreHardwareMonitor's Intel aggregate temperatures (Core Average,
+  Core Max) retain their previous value when the per-core MSR read
+  fails, because the library only writes them when a core produced a
+  value. A retained aggregate could therefore be published as a
+  temperature measured on the current cycle. Aggregates are now marked
+  as retained when every per-core input is unreadable, and a retained
+  value is never published as a fresh reading.
+- The diagnostics reported the Intel integrated GPU's shared-memory
+  sensors as "the names are not recognized", which pointed at a gap in
+  the candidate list that does not exist: shared system memory is
+  deliberately excluded because it is not video memory. Deliberate
+  exclusions are now reported separately from unrecognized names.
+
+The opt-in diagnostics gained a sensor trace that distinguishes the six
+ways a figure can be unavailable - no sensor enumerated, sensors
+enumerated but unreadable, readable sensors under unrecognized names, a
+reading lost in merging, a failed hardware update, and an unavailable
+backend - and records the sensor names, types, values and units, the
+selection outcome, the measurement status, the source and the timestamps
+behind each one. The trace goes to the opt-in inventory export; the
+routine log keeps only the metric, the sensor type, the sensor count
+and the diagnosis.
+
+No sensor-name candidate was added: the authoritative backend source
+confirms the candidate list already covers the names this hardware
+reports, and no readable temperature sensor is hidden behind an
+unrecognized name.
+
+The CPU temperature reads no value under the tested unprivileged context,
+and the widget does not elevate. Whether any unprivileged approach could
+read it, or whether elevation would fix it, is an open question —
+elevation has not been tested, so this document does not claim elevation
+would fix the issue, nor that no unprivileged solution is possible.
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>
 ```

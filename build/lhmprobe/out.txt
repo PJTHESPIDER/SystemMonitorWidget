@@ -1,0 +1,51 @@
+=== CPU HARDWARE ===
+HW type=Cpu name=Intel Core i7-10875H ident=/intelcpu/0
+  SENSOR name='CPU Core #1 Thread #1' type=Load value=100.000 raw=present
+  SENSOR name='CPU Core #1 Thread #2' type=Load value=12.500 raw=present
+  SENSOR name='CPU Core #2 Thread #1' type=Load value=12.500 raw=present
+  SENSOR name='CPU Core #2 Thread #2' type=Load value=37.500 raw=present
+  SENSOR name='CPU Core #3 Thread #1' type=Load value=12.500 raw=present
+  SENSOR name='CPU Core #3 Thread #2' type=Load value=12.500 raw=present
+  SENSOR name='CPU Core #4 Thread #1' type=Load value=12.500 raw=present
+  SENSOR name='CPU Core #4 Thread #2' type=Load value=0.000 raw=present
+  SENSOR name='CPU Core #5 Thread #1' type=Load value=12.500 raw=present
+  SENSOR name='CPU Core #5 Thread #2' type=Load value=12.500 raw=present
+  SENSOR name='CPU Core #6 Thread #1' type=Load value=11.110 raw=present
+  SENSOR name='CPU Core #6 Thread #2' type=Load value=14.290 raw=present
+  SENSOR name='CPU Core #7 Thread #1' type=Load value=50.000 raw=present
+  SENSOR name='CPU Core #7 Thread #2' type=Load value=11.110 raw=present
+  SENSOR name='CPU Core #8 Thread #1' type=Load value=25.000 raw=present
+  SENSOR name='CPU Core #8 Thread #2' type=Load value=37.500 raw=present
+  SENSOR name='CPU Total' type=Load value=23.380 raw=present
+  SENSOR name='CPU Core Max' type=Load value=100.000 raw=present
+  SENSOR name='Core Max' type=Temperature value=(null) raw=null
+  SENSOR name='Core Average' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #1' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #2' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #3' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #4' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #5' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #6' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #7' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #8' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Package' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #1 Distance to TjMax' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #2 Distance to TjMax' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #3 Distance to TjMax' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #4 Distance to TjMax' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #5 Distance to TjMax' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #6 Distance to TjMax' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #7 Distance to TjMax' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #8 Distance to TjMax' type=Temperature value=(null) raw=null
+  SENSOR name='CPU Core #1' type=Clock value=(null) raw=null
+  SENSOR name='CPU Core #2' type=Clock value=(null) raw=null
+  SENSOR name='CPU Core #3' type=Clock value=(null) raw=null
+  SENSOR name='CPU Core #4' type=Clock value=(null) raw=null
+  SENSOR name='CPU Core #5' type=Clock value=(null) raw=null
+  SENSOR name='CPU Core #6' type=Clock value=(null) raw=null
+  SENSOR name='CPU Core #7' type=Clock value=(null) raw=null
+  SENSOR name='CPU Core #8' type=Clock value=(null) raw=null
+  SENSOR name='CPU Package' type=Power value=(null) raw=null
+  SENSOR name='CPU Cores' type=Power value=(null) raw=null
+  SENSOR name='CPU Memory' type=Power value=(null) raw=null
+  SENSOR name='CPU Platform' type=Power value=(null) raw=null

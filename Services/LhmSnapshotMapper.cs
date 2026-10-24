@@ -15,6 +15,14 @@ namespace System_Monitor.Services
         public IReadOnlyList<HardwareDevice> Gpus { get; init; } = Array.Empty<HardwareDevice>();
         public IReadOnlyList<DeviceReading> Readings { get; init; } = Array.Empty<DeviceReading>();
 
+        /// <summary>
+        /// What the selection saw for each device and metric. It is the
+        /// evidence behind the published values, and the diagnostics report
+        /// it so an unavailable figure can be explained.
+        /// </summary>
+        public IReadOnlyList<LhmSensorTrace> Traces { get; init; } =
+            Array.Empty<LhmSensorTrace>();
+
         /// <summary>True when the backend reported no devices at all.</summary>
         public bool IsEmpty => Cpus.Count == 0 && Gpus.Count == 0;
 
@@ -88,6 +96,7 @@ namespace System_Monitor.Services
             var cpus = new List<HardwareDevice>();
             var gpus = new List<HardwareDevice>();
             var readings = new List<DeviceReading>();
+            var traces = new List<LhmSensorTrace>();
 
             // Guard against a backend that reports the same device twice:
             // the first occurrence wins, so identity stays unambiguous.
@@ -106,7 +115,10 @@ namespace System_Monitor.Services
                 else
                     gpus.Add(hardwareDevice);
 
-                readings.AddRange(ProjectReadings(device, hardwareDevice));
+                var projected = ProjectReadings(device, hardwareDevice);
+                readings.AddRange(projected);
+
+                traces.Add(BuildTrace(device, projected));
             }
 
             return new LhmProjectionResult
@@ -114,6 +126,7 @@ namespace System_Monitor.Services
                 Cpus = cpus.ToArray(),
                 Gpus = gpus.ToArray(),
                 Readings = readings.ToArray(),
+                Traces = traces.ToArray(),
             };
         }
 
@@ -146,25 +159,40 @@ namespace System_Monitor.Services
         ///
         /// <list type="number">
         /// <item><description>
-        /// A GPU known to be discrete — it is the device whose load and
-        /// temperature are the conventional headline figures.
+        /// <b>Telemetry availability first.</b> A device that has at least one
+        /// usable current reading (load, temperature, or memory — including
+        /// properly attributed fallback scalars) is preferred over a device with
+        /// no usable telemetry. A valid zero-percent load is a real reading and
+        /// counts as usable. Stale readings do not count.
         /// </description></item>
         /// <item><description>
-        /// A GPU whose integration class is unknown — it may well be
-        /// discrete, and a separate card is a more useful headline than
-        /// the integrated part of the CPU.
+        /// <b>Integration class.</b> Among devices with equal telemetry
+        /// availability, a GPU known to be <i>discrete</i> wins, because a
+        /// separate card is the device whose load and temperature are the
+        /// conventional headline figures. A GPU whose class is <i>unknown</i>
+        /// comes next — most vendors do not expose the class, and an unknown
+        /// class is far more often discrete than integrated. A GPU known to be
+        /// <i>integrated</i> comes last: it is the on-die part of the CPU, and
+        /// is only the headline when nothing else is present.
         /// </description></item>
         /// <item><description>
-        /// A GPU known to be integrated — the on-die part is the secondary
-        /// device and is only the headline when nothing else is present.
+        /// <b>Instance identity as the tie-break.</b> Within the same
+        /// integration class and telemetry availability, the device with the
+        /// lowest <see cref="HardwareDevice.InstanceId"/> wins, compared
+        /// ordinally. The instance id is a per-device identifier assigned by
+        /// the platform, so this choice does not depend on the order in which
+        /// the devices were enumerated. It is therefore stable across
+        /// collections, across reboots, and regardless of which card the
+        /// backend happened to list first.
+        /// </description></item>
+        /// <item><description>
+        /// <b>Device id as the final tie-break.</b> Two devices that share an
+        /// instance id (which should not happen, but can when the backend
+        /// reports a device twice) are separated by their device id, again
+        /// ordinally. The order is total, so the default is always
+        /// deterministic.
         /// </description></item>
         /// </list>
-        ///
-        /// <para>
-        /// The tie-break is the device's instance identity, then its device
-        /// id, so the choice is stable across collections and does not
-        /// depend on enumeration order.
-        /// </para>
         ///
         /// <para>
         /// <b>This must be the same choice the widget presents.</b> The
@@ -178,12 +206,35 @@ namespace System_Monitor.Services
         /// it.
         /// </para>
         /// </summary>
-        public static HardwareDevice? SelectPrimaryGpu(IReadOnlyList<HardwareDevice> gpus)
+        public static HardwareDevice? SelectPrimaryGpu(
+            IReadOnlyList<HardwareDevice> gpus,
+            MetricsSnapshot? snapshot = null,
+            Measurement? gpuLoadPercent = null,
+            string? gpuLoadDeviceId = null,
+            Measurement? gpuTemperatureC = null,
+            string? gpuTemperatureDeviceId = null,
+            Measurement? gpuVramUsedBytes = null,
+            string? gpuVramUsedDeviceId = null,
+            Measurement? gpuVramTotalBytes = null,
+            string? gpuVramTotalDeviceId = null)
         {
             if (gpus is null || gpus.Count == 0)
                 return null;
 
-            return GpuSelectionPolicy.OrderForPresentation(gpus).FirstOrDefault();
+            var selection = GpuSelectionPolicy.Resolve(
+                gpus,
+                selectedInstanceId: null,
+                snapshot,
+                gpuLoadPercent,
+                gpuLoadDeviceId,
+                gpuTemperatureC,
+                gpuTemperatureDeviceId,
+                gpuVramUsedBytes,
+                gpuVramUsedDeviceId,
+                gpuVramTotalBytes,
+                gpuVramTotalDeviceId);
+
+            return selection.Device;
         }
 
         /// <summary>
@@ -199,29 +250,84 @@ namespace System_Monitor.Services
             return cpus.OrderBy(c => c.DeviceId, StringComparer.Ordinal).First();
         }
 
-        private static IEnumerable<DeviceReading> ProjectReadings(LhmDeviceDescriptor device, HardwareDevice hardwareDevice)
+        /// <summary>
+        /// The metrics a device is asked for, in the order they are
+        /// published.
+        /// </summary>
+        private static IEnumerable<(string Metric, LhmSensorKind Kind)> MetricsFor(bool isCpu)
         {
-            if (device.IsCpu)
+            if (isCpu)
             {
-                yield return Reading(hardwareDevice.DeviceId, LhmSensorSelection.CpuLoadMetric, device.Sensors, LhmSensorKind.CpuLoadPercent);
-                yield return Reading(hardwareDevice.DeviceId, LhmSensorSelection.CpuTemperatureMetric, device.Sensors, LhmSensorKind.CpuTemperatureC);
-                yield return Reading(hardwareDevice.DeviceId, LhmSensorSelection.CpuClockMetric, device.Sensors, LhmSensorKind.CpuClockMHz);
+                yield return (LhmSensorSelection.CpuLoadMetric, LhmSensorKind.CpuLoadPercent);
+                yield return (LhmSensorSelection.CpuTemperatureMetric, LhmSensorKind.CpuTemperatureC);
+                yield return (LhmSensorSelection.CpuClockMetric, LhmSensorKind.CpuClockMHz);
             }
             else
             {
-                yield return Reading(hardwareDevice.DeviceId, LhmSensorSelection.GpuLoadMetric, device.Sensors, LhmSensorKind.GpuLoadPercent);
-                yield return Reading(hardwareDevice.DeviceId, LhmSensorSelection.GpuTemperatureMetric, device.Sensors, LhmSensorKind.GpuTemperatureC);
-                yield return Reading(hardwareDevice.DeviceId, LhmSensorSelection.GpuClockMetric, device.Sensors, LhmSensorKind.GpuClockMHz);
-                yield return Reading(hardwareDevice.DeviceId, LhmSensorSelection.GpuMemoryUsedMetric, device.Sensors, LhmSensorKind.GpuMemoryUsedBytes);
-                yield return Reading(hardwareDevice.DeviceId, LhmSensorSelection.GpuMemoryTotalMetric, device.Sensors, LhmSensorKind.GpuMemoryTotalBytes);
+                yield return (LhmSensorSelection.GpuLoadMetric, LhmSensorKind.GpuLoadPercent);
+                yield return (LhmSensorSelection.GpuTemperatureMetric, LhmSensorKind.GpuTemperatureC);
+                yield return (LhmSensorSelection.GpuClockMetric, LhmSensorKind.GpuClockMHz);
+                yield return (LhmSensorSelection.GpuMemoryUsedMetric, LhmSensorKind.GpuMemoryUsedBytes);
+                yield return (LhmSensorSelection.GpuMemoryTotalMetric, LhmSensorKind.GpuMemoryTotalBytes);
             }
+        }
+
+        private static List<DeviceReading> ProjectReadings(
+            LhmDeviceDescriptor device,
+            HardwareDevice hardwareDevice)
+        {
+            var readings = new List<DeviceReading>();
+
+            foreach (var (metric, kind) in MetricsFor(device.IsCpu))
+                readings.Add(Reading(hardwareDevice.DeviceId, metric, device.Sensors, kind, device.RefreshFailed));
+
+            return readings;
+        }
+
+        /// <summary>
+        /// Builds the trace of what the selection saw for one device.
+        /// </summary>
+        private static LhmSensorTrace BuildTrace(
+            LhmDeviceDescriptor device,
+            IReadOnlyList<DeviceReading> readings)
+        {
+            var metrics = new List<LhmMetricTrace>();
+
+            foreach (var (metric, kind) in MetricsFor(device.IsCpu))
+            {
+                var reading = readings.FirstOrDefault(
+                    r => r.DeviceId == device.DeviceId && r.Metric == metric);
+
+                var selected = LhmSensorSelection.Select(
+                    device.Sensors, kind, preferReadableValue: true);
+
+                metrics.Add(LhmSensorSelection.Trace(
+                    metric,
+                    kind,
+                    device.Sensors,
+                    selected,
+                    reading?.Measurement.Status ?? MeasurementStatus.Unsupported,
+                    reading?.Measurement.Source,
+                    device.RefreshFailed));
+            }
+
+            return new LhmSensorTrace
+            {
+                DeviceId = device.DeviceId,
+                DeviceName = device.DisplayName,
+                IsCpu = device.IsCpu,
+                RefreshFailed = device.RefreshFailed,
+                Sensors = device.Sensors,
+                Metrics = metrics,
+            };
         }
 
         private static DeviceReading Reading(
             string deviceId,
             string metric,
             IReadOnlyList<LhmSensorDescriptor> sensors,
-            LhmSensorKind kind)
+            LhmSensorKind kind,
+            bool refreshFailed = false)
         {
             var sensor = LhmSensorSelection.Select(sensors, kind, preferReadableValue: true);
 
@@ -244,6 +350,22 @@ namespace System_Monitor.Services
                 // The sensor exists but the reading is missing, NaN, infinite,
                 // or expressed in an unexpected unit. Report it as failed so
                 // it is distinguishable from "no such sensor", and never as 0.
+                return new DeviceReading
+                {
+                    DeviceId = deviceId,
+                    Metric = metric,
+                    Measurement = Measurement.Failed(source),
+                };
+            }
+
+            // The value was read from a sensor whose hardware node could not
+            // be refreshed, so it is one retained from an earlier read. It
+            // is a real measurement — of some earlier moment — but it is not
+            // a measurement of this cycle, and it must not be published as
+            // one. It is reported as failed so it is never presented as a
+            // current figure.
+            if (sensor.IsRetained || refreshFailed)
+            {
                 return new DeviceReading
                 {
                     DeviceId = deviceId,

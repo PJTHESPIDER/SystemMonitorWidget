@@ -17,7 +17,12 @@ namespace System_Monitor.Services
     /// <see cref="GpuMemoryLabel.Unspecified"/> when no pool was
     /// established.
     /// </param>
-    public readonly record struct GpuMemoryDisplay(string Display, GpuMemoryLabel Label);
+    /// <param name="CompactDisplay">
+    /// The compact "used / total unit" string when the pair is compatible,
+    /// or the used-only compact string when only used is available,
+    /// or "N/A" when neither is available.
+    /// </param>
+    public readonly record struct GpuMemoryDisplay(string Display, GpuMemoryLabel Label, string CompactDisplay);
 
     /// <summary>
     /// Builds a GPU-memory display and the heading it is shown under.
@@ -209,17 +214,19 @@ namespace System_Monitor.Services
             string? totalDeviceId,
             string? presentedDeviceId)
         {
+            // No usable used figure at all
             if (!GpuMemoryCompatibilityPolicy.IsUsable(used))
             {
-                // Nothing to describe, so nothing is claimed about the
-                // figure. The heading names the memory category only when
-                // the presented device's own figures establish it.
                 var category = GpuMemoryCompatibilityPolicy.DeviceCategoryOf(
                     used, usedDeviceId, total, totalDeviceId, presentedDeviceId);
 
+                // When there's no used figure, we cannot show a meaningful compact
+                // capacity display. A fake "0" used value would be misleading.
+                // The total figure alone (without used) does not make a capacity display.
                 return new GpuMemoryDisplay(
                     NotAvailable,
-                    category ?? GpuMemoryLabel.Unspecified);
+                    category ?? GpuMemoryLabel.Unspecified,
+                    NotAvailable);
             }
 
             var usedValue = used!.Value!.Value;
@@ -239,19 +246,26 @@ namespace System_Monitor.Services
                 var display =
                     $"{ByteFormatter.FormatBytes(usedValue)} / {ByteFormatter.FormatBytes(totalValue)} ({pct:F1}%)";
 
-                // The combined display's heading is the pool the pair
-                // establishes — which is not the pool the compatibility
-                // policy merely allows.
+                // Compact display uses shared-unit precision policy
+                var compactDisplay = ByteFormatter.FormatCapacityCompact(usedValue, totalValue);
+
                 var label = GpuMemoryCompatibilityPolicy.CombinedLabelOf(used, total);
 
-                return new GpuMemoryDisplay(display, label);
+                return new GpuMemoryDisplay(display, label, compactDisplay);
             }
 
-            // The used figure alone. Its heading comes from the used figure
-            // alone: the rejected total contributes nothing.
+            // The used figure alone (pair rejected). Its heading comes from the used figure alone.
+            // Check if total is usable but incompatible (not null, just not compatible)
+            // We don't show the total in compact form because it was rejected by compatibility
+            var usedCompactDisplay = ByteFormatter.FormatCapacityCompact(usedValue, usedValue);
+            // Actually for used-only we show just the used amount with a sensible unit
+            // FormatCapacityCompact requires total, so we'll format used alone
+            var usedAloneDisplay = ByteFormatter.FormatBytes(usedValue);
+
             return new GpuMemoryDisplay(
                 ByteFormatter.FormatBytes(usedValue),
-                GpuMemoryCompatibilityPolicy.LabelOf(used));
+                GpuMemoryCompatibilityPolicy.LabelOf(used),
+                usedAloneDisplay);
         }
     }
 }

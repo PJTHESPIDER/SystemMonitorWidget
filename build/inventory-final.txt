@@ -1,0 +1,865 @@
+﻿# SystemMonitor diagnostic inventory
+# Generated on explicit request. This file describes one specific
+# machine in detail and may contain device identifiers.
+# It is safe to share only after checking what it contains.
+generated: 2026-10-22 06:40:13 +00:00
+os: Microsoft Windows NT 10.0.26200.0
+runtime: 8.0.32
+process_arch: X64
+os_arch: X64
+
+sample_time: 2026-10-22 06:40:11.630 +00:00
+device_count: cpus=1 gpus=2
+
+[cpu devices]
+  - device_id: /intelcpu/0
+    name: Intel Core i7-10875H
+    vendor: Intel
+    class: Cpu
+    integration: Unknown
+    pci_device_key: (not exposed)
+    instance_id: (not exposed)
+    sensors:
+      - metric: ClockMHz
+        status: Failed
+        value: (none)
+        unit: (none)
+        source: LibreHardwareMonitor:CPU Core #1
+      - metric: LoadPercent
+        status: Available
+        value: 17.50
+        unit: %
+        source: LibreHardwareMonitor:CPU Total
+      - metric: TemperatureC
+        status: Failed
+        value: (none)
+        unit: (none)
+        source: LibreHardwareMonitor:CPU Package
+
+[gpu devices]
+  - device_id: /gpu-nvidia/0
+    name: NVIDIA GeForce RTX 2070 Super with Max-Q Design
+    vendor: NVIDIA
+    class: Gpu
+    integration: Unknown
+    pci_device_key: VEN_10DE&DEV_1E91
+    instance_id: PCI\VEN_10DE&DEV_1E91&SUBSYS_20091A58&REV_A1\4&7aadb68&0&0008
+    sensors:
+      - metric: ClockMHz
+        status: Available
+        value: 300.00
+        unit: MHz
+        source: LibreHardwareMonitor:GPU Core
+      - metric: LoadPercent
+        status: Available
+        value: 19.00
+        unit: %
+        source: LibreHardwareMonitor:GPU Core
+      - metric: TemperatureC
+        status: Available
+        value: 59.00
+        unit: °C
+        source: LibreHardwareMonitor:GPU Core
+      - metric: VramTotalBytes
+        status: Available
+        value: 8589934592.00
+        unit: B
+        source: LibreHardwareMonitor:GPU Memory Total
+      - metric: VramUsedBytes
+        status: Available
+        value: 907018240.00
+        unit: B
+        source: LibreHardwareMonitor:GPU Memory Used
+
+  - device_id: /gpu-intel-integrated/%5C%5C%3F%5CPCI%23VEN_8086%26DEV_9BC4%26SUBSYS_20091A58%26REV_05%233%2611583659%260%2610%23%7B1ca05180-a699-450a-9a0c-de4fbe3ddd89%7D
+    name: Intel(R) UHD Graphics
+    vendor: Intel
+    class: Gpu
+    integration: Integrated
+    pci_device_key: VEN_8086&DEV_9BC4
+    instance_id: PCI\VEN_8086&DEV_9BC4&SUBSYS_20091A58&REV_05\3&11583659&0&10
+    sensors:
+      - metric: ClockMHz
+        status: Unsupported
+        value: (none)
+        unit: (none)
+        source: LibreHardwareMonitor
+      - metric: LoadPercent
+        status: Available
+        value: 0.00
+        unit: %
+        source: LibreHardwareMonitor:D3D 3D
+      - metric: TemperatureC
+        status: Unsupported
+        value: (none)
+        unit: (none)
+        source: LibreHardwareMonitor
+      - metric: VramTotalBytes
+        status: Unsupported
+        value: (none)
+        unit: (none)
+        source: LibreHardwareMonitor
+      - metric: VramUsedBytes
+        status: Unsupported
+        value: (none)
+        unit: (none)
+        source: LibreHardwareMonitor
+
+[system metrics]
+  - cpu_load_percent:
+      status: Failed
+      value: (none)
+      unit: (none)
+      source: Windows CPU counters
+  - cpu_clock_mhz:
+      status: Available
+      value: 2304.00
+      unit: MHz
+      source: Win32_Processor
+  - cpu_temperature_c:
+      status: Failed
+      value: (none)
+      unit: (none)
+      source: LibreHardwareMonitor
+  - gpu_load_percent:
+      status: Available
+      value: 19.00
+      unit: %
+      source: LibreHardwareMonitor
+  - gpu_temperature_c:
+      status: Available
+      value: 59.00
+      unit: °C
+      source: LibreHardwareMonitor
+  - gpu_vram_used_bytes:
+      status: Available
+      value: 907018240.00
+      unit: B
+      source: LibreHardwareMonitor:GPU Memory Used
+  - gpu_vram_total_bytes:
+      status: Available
+      value: 8589934592.00
+      unit: B
+      source: LibreHardwareMonitor:GPU Memory Total
+  - ram_used_bytes:
+      status: Available
+      value: 13807054848.00
+      unit: bytes
+      source: GlobalMemoryStatusEx
+  - ram_total_bytes:
+      status: Available
+      value: 17033854976.00
+      unit: bytes
+      source: GlobalMemoryStatusEx
+  - ram_percent:
+      status: Available
+      value: 81.06
+      unit: %
+      source: GlobalMemoryStatusEx
+  - disk_used_bytes:
+      status: Available
+      value: 656518955008.00
+      unit: bytes
+      source: DriveInfo
+  - disk_total_bytes:
+      status: Available
+      value: 1981777268736.00
+      unit: bytes
+      source: DriveInfo
+  - disk_percent:
+      status: Available
+      value: 33.13
+      unit: %
+      source: DriveInfo
+  - network_down_bytes_per_sec:
+      status: Failed
+      value: (none)
+      unit: (none)
+      source: NetworkInterface
+  - network_up_bytes_per_sec:
+      status: Failed
+      value: (none)
+      unit: (none)
+      source: NetworkInterface
+  - acpi_thermal_zone_temperature_c:
+      status: Failed
+      value: (none)
+      unit: (none)
+      source: MSAcpi_ThermalZoneTemperature
+
+[sensor trace]
+  backend_initialized: True
+  read_failed: False
+  read_at: 2026-10-22 06:40:12.890 +00:00
+  device_count: 3
+
+  - device_id: /intelcpu/0
+    name: Intel Core i7-10875H
+    class: Cpu
+    refresh_failed: False
+    raw_sensors:
+      - name: CPU Core #1 Thread #1
+        type: Load
+        value: 36.84
+        unit: %
+        retained: False
+      - name: CPU Core #1 Thread #2
+        type: Load
+        value: 20.00
+        unit: %
+        retained: False
+      - name: CPU Core #2 Thread #1
+        type: Load
+        value: 10.53
+        unit: %
+        retained: False
+      - name: CPU Core #2 Thread #2
+        type: Load
+        value: 25.00
+        unit: %
+        retained: False
+      - name: CPU Core #3 Thread #1
+        type: Load
+        value: 26.32
+        unit: %
+        retained: False
+      - name: CPU Core #3 Thread #2
+        type: Load
+        value: 5.26
+        unit: %
+        retained: False
+      - name: CPU Core #4 Thread #1
+        type: Load
+        value: 5.00
+        unit: %
+        retained: False
+      - name: CPU Core #4 Thread #2
+        type: Load
+        value: 15.79
+        unit: %
+        retained: False
+      - name: CPU Core #5 Thread #1
+        type: Load
+        value: 26.32
+        unit: %
+        retained: False
+      - name: CPU Core #5 Thread #2
+        type: Load
+        value: 10.53
+        unit: %
+        retained: False
+      - name: CPU Core #6 Thread #1
+        type: Load
+        value: 10.00
+        unit: %
+        retained: False
+      - name: CPU Core #6 Thread #2
+        type: Load
+        value: 20.00
+        unit: %
+        retained: False
+      - name: CPU Core #7 Thread #1
+        type: Load
+        value: 21.05
+        unit: %
+        retained: False
+      - name: CPU Core #7 Thread #2
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: CPU Core #8 Thread #1
+        type: Load
+        value: 21.05
+        unit: %
+        retained: False
+      - name: CPU Core #8 Thread #2
+        type: Load
+        value: 26.32
+        unit: %
+        retained: False
+      - name: CPU Total
+        type: Load
+        value: 17.50
+        unit: %
+        retained: False
+      - name: CPU Core Max
+        type: Load
+        value: 36.84
+        unit: %
+        retained: False
+      - name: Core Max
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: Core Average
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #1
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #2
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #3
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #4
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #5
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #6
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #7
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #8
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Package
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #1 Distance to TjMax
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #2 Distance to TjMax
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #3 Distance to TjMax
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #4 Distance to TjMax
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #5 Distance to TjMax
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #6 Distance to TjMax
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #7 Distance to TjMax
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #8 Distance to TjMax
+        type: Temperature
+        value: (null)
+        unit: °C
+        retained: False
+      - name: CPU Core #1
+        type: Clock
+        value: (null)
+        unit: MHz
+        retained: False
+      - name: CPU Core #2
+        type: Clock
+        value: (null)
+        unit: MHz
+        retained: False
+      - name: CPU Core #3
+        type: Clock
+        value: (null)
+        unit: MHz
+        retained: False
+      - name: CPU Core #4
+        type: Clock
+        value: (null)
+        unit: MHz
+        retained: False
+      - name: CPU Core #5
+        type: Clock
+        value: (null)
+        unit: MHz
+        retained: False
+      - name: CPU Core #6
+        type: Clock
+        value: (null)
+        unit: MHz
+        retained: False
+      - name: CPU Core #7
+        type: Clock
+        value: (null)
+        unit: MHz
+        retained: False
+      - name: CPU Core #8
+        type: Clock
+        value: (null)
+        unit: MHz
+        retained: False
+      - name: CPU Package
+        type: Power
+        value: 0.00
+        unit: unknown
+        retained: False
+      - name: CPU Cores
+        type: Power
+        value: 0.00
+        unit: unknown
+        retained: False
+      - name: CPU Memory
+        type: Power
+        value: 0.00
+        unit: unknown
+        retained: False
+      - name: CPU Platform
+        type: Power
+        value: 0.00
+        unit: unknown
+        retained: False
+    metrics:
+      - metric: LoadPercent
+        required_sensor_type: Load
+        sensor_count: 18
+        candidate_names: CPU Total, Cores (Average), Total
+        recognized_sensors: CPU Total=17.50
+        readable_sensors: CPU Core #1 Thread #1=36.84, CPU Core #1 Thread #2=20.00, CPU Core #2 Thread #1=10.53, CPU Core #2 Thread #2=25.00, CPU Core #3 Thread #1=26.32, CPU Core #3 Thread #2=5.26, CPU Core #4 Thread #1=5.00, CPU Core #4 Thread #2=15.79, CPU Core #5 Thread #1=26.32, CPU Core #5 Thread #2=10.53, CPU Core #6 Thread #1=10.00, CPU Core #6 Thread #2=20.00, CPU Core #7 Thread #1=21.05, CPU Core #7 Thread #2=0.00, CPU Core #8 Thread #1=21.05, CPU Core #8 Thread #2=26.32, CPU Total=17.50, CPU Core Max=36.84
+        excluded_sensors: (none)
+        selected_sensor: CPU Total
+        measurement_status: Available
+        source: LibreHardwareMonitor:CPU Total
+        published_value: 17.50
+        published_status: Available
+        diagnosis: reading available
+      - metric: TemperatureC
+        required_sensor_type: Temperature
+        sensor_count: 19
+        candidate_names: CPU Package, Core (Tctl/Tdie), Core (Tdie), Core Average, Core Max, CCDs Average (Tdie)
+        recognized_sensors: Core Max=(null), Core Average=(null), CPU Package=(null)
+        readable_sensors: (none)
+        excluded_sensors: (none)
+        selected_sensor: CPU Package
+        measurement_status: Failed
+        source: LibreHardwareMonitor:CPU Package
+        published_value: (none)
+        published_status: Failed
+        diagnosis: case 2: matching sensors are enumerated but report no usable value
+      - metric: ClockMHz
+        required_sensor_type: Clock
+        sensor_count: 8
+        candidate_names: CPU Core #1, CPU Core #, Core Clock
+        recognized_sensors: CPU Core #1=(null), CPU Core #2=(null), CPU Core #3=(null), CPU Core #4=(null), CPU Core #5=(null), CPU Core #6=(null), CPU Core #7=(null), CPU Core #8=(null)
+        readable_sensors: (none)
+        excluded_sensors: (none)
+        selected_sensor: CPU Core #1
+        measurement_status: Failed
+        source: LibreHardwareMonitor:CPU Core #1
+        published_value: (none)
+        published_status: Failed
+        diagnosis: case 2: matching sensors are enumerated but report no usable value
+
+  - device_id: /gpu-nvidia/0
+    name: NVIDIA GeForce RTX 2070 Super with Max-Q Design
+    class: Gpu
+    refresh_failed: False
+    raw_sensors:
+      - name: GPU Core
+        type: Temperature
+        value: 59.00
+        unit: °C
+        retained: False
+      - name: GPU Core
+        type: Clock
+        value: 300.00
+        unit: MHz
+        retained: False
+      - name: GPU Memory
+        type: Clock
+        value: 405.00
+        unit: MHz
+        retained: False
+      - name: GPU Core
+        type: Load
+        value: 19.00
+        unit: %
+        retained: False
+      - name: GPU Memory Controller
+        type: Load
+        value: 14.00
+        unit: %
+        retained: False
+      - name: GPU Video Engine
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: GPU Bus
+        type: Load
+        value: 1.00
+        unit: %
+        retained: False
+      - name: GPU Core Voltage
+        type: Voltage
+        value: 0.61
+        unit: unknown
+        retained: False
+      - name: D3D Dedicated Memory Used
+        type: SmallData
+        value: 670.12
+        unit: MB
+        retained: False
+      - name: D3D Shared Memory Used
+        type: SmallData
+        value: 53.35
+        unit: MB
+        retained: False
+      - name: D3D 3D
+        type: Load
+        value: 12.09
+        unit: %
+        retained: False
+      - name: D3D Overlay
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Video Decode
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Copy
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Copy
+        type: Load
+        value: 0.01
+        unit: %
+        retained: False
+      - name: D3D Copy
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Security
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Video Encode
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D VR
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Copy
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Copy
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Copy
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Copy
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: GPU Hot Spot
+        type: Temperature
+        value: 65.75
+        unit: °C
+        retained: False
+      - name: GPU Memory Junction
+        type: Temperature
+        value: 65.81
+        unit: °C
+        retained: False
+      - name: GPU Memory Total
+        type: SmallData
+        value: 8192.00
+        unit: MB
+        retained: False
+      - name: GPU Memory Free
+        type: SmallData
+        value: 7326.00
+        unit: MB
+        retained: False
+      - name: GPU Memory Used
+        type: SmallData
+        value: 865.00
+        unit: MB
+        retained: False
+      - name: GPU Memory
+        type: Load
+        value: 10.57
+        unit: %
+        retained: False
+      - name: GPU Package
+        type: Power
+        value: 19.30
+        unit: unknown
+        retained: False
+      - name: GPU PCIe Rx
+        type: Throughput
+        value: 79949824.00
+        unit: unknown
+        retained: False
+      - name: GPU PCIe Tx
+        type: Throughput
+        value: 11549696.00
+        unit: unknown
+        retained: False
+    metrics:
+      - metric: LoadPercent
+        required_sensor_type: Load
+        sensor_count: 18
+        candidate_names: GPU Core, GPU Total, D3D 3D, D3D 
+        recognized_sensors: GPU Core=19.00, D3D 3D=12.09
+        readable_sensors: GPU Core=19.00, GPU Memory Controller=14.00, GPU Video Engine=0.00, GPU Bus=1.00, D3D 3D=12.09, D3D Overlay=0.00, D3D Video Decode=0.00, D3D Copy=0.00, D3D Copy=0.01, D3D Copy=0.00, D3D Security=0.00, D3D Video Encode=0.00, D3D VR=0.00, D3D Copy=0.00, D3D Copy=0.00, D3D Copy=0.00, D3D Copy=0.00, GPU Memory=10.57
+        excluded_sensors: (none)
+        selected_sensor: GPU Core
+        measurement_status: Available
+        source: LibreHardwareMonitor:GPU Core
+        published_value: 19.00
+        published_status: Available
+        diagnosis: reading available
+      - metric: TemperatureC
+        required_sensor_type: Temperature
+        sensor_count: 3
+        candidate_names: GPU Core, GPU Hot Spot, Core, Hot Spot
+        recognized_sensors: GPU Core=59.00, GPU Hot Spot=65.75
+        readable_sensors: GPU Core=59.00, GPU Hot Spot=65.75, GPU Memory Junction=65.81
+        excluded_sensors: (none)
+        selected_sensor: GPU Core
+        measurement_status: Available
+        source: LibreHardwareMonitor:GPU Core
+        published_value: 59.00
+        published_status: Available
+        diagnosis: reading available
+      - metric: ClockMHz
+        required_sensor_type: Clock
+        sensor_count: 2
+        candidate_names: GPU Core, GPU Memory, GPU SoC
+        recognized_sensors: GPU Core=300.00, GPU Memory=405.00
+        readable_sensors: GPU Core=300.00, GPU Memory=405.00
+        excluded_sensors: (none)
+        selected_sensor: GPU Core
+        measurement_status: Available
+        source: LibreHardwareMonitor:GPU Core
+        published_value: 300.00
+        published_status: Available
+        diagnosis: reading available
+      - metric: VramUsedBytes
+        required_sensor_type: SmallData
+        sensor_count: 5
+        candidate_names: GPU Memory Used, D3D Dedicated Memory Used, VRAM Used, Memory Used
+        recognized_sensors: D3D Dedicated Memory Used=670.12, GPU Memory Used=865.00
+        readable_sensors: D3D Dedicated Memory Used=670.12, D3D Shared Memory Used=53.35, GPU Memory Total=8192.00, GPU Memory Free=7326.00, GPU Memory Used=865.00
+        excluded_sensors: D3D Shared Memory Used=53.35
+        selected_sensor: GPU Memory Used
+        measurement_status: Available
+        source: LibreHardwareMonitor:GPU Memory Used
+        published_value: 907018240.00
+        published_status: Available
+        diagnosis: reading available
+      - metric: VramTotalBytes
+        required_sensor_type: SmallData
+        sensor_count: 5
+        candidate_names: GPU Memory Total, D3D Dedicated Memory Total, VRAM Total, Memory Total
+        recognized_sensors: GPU Memory Total=8192.00
+        readable_sensors: D3D Dedicated Memory Used=670.12, D3D Shared Memory Used=53.35, GPU Memory Total=8192.00, GPU Memory Free=7326.00, GPU Memory Used=865.00
+        excluded_sensors: D3D Shared Memory Used=53.35
+        selected_sensor: GPU Memory Total
+        measurement_status: Available
+        source: LibreHardwareMonitor:GPU Memory Total
+        published_value: 8589934592.00
+        published_status: Available
+        diagnosis: reading available
+
+  - device_id: /gpu-intel-integrated/%5C%5C%3F%5CPCI%23VEN_8086%26DEV_9BC4%26SUBSYS_20091A58%26REV_05%233%2611583659%260%2610%23%7B1ca05180-a699-450a-9a0c-de4fbe3ddd89%7D
+    name: Intel(R) UHD Graphics
+    class: Gpu
+    refresh_failed: False
+    raw_sensors:
+      - name: GPU Power
+        type: Power
+        value: 0.00
+        unit: unknown
+        retained: False
+      - name: D3D Shared Memory Total
+        type: SmallData
+        value: 8122.38
+        unit: MB
+        retained: False
+      - name: D3D Shared Memory Free
+        type: SmallData
+        value: (null)
+        unit: MB
+        retained: False
+      - name: D3D Shared Memory Used
+        type: SmallData
+        value: 29.45
+        unit: MB
+        retained: False
+      - name: D3D 3D
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Video Decode
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Copy
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Video Processing
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Video Decode
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D 
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D 
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D 
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Overlay
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D GDI Render
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+      - name: D3D Video Processing
+        type: Load
+        value: 0.00
+        unit: %
+        retained: False
+    metrics:
+      - metric: LoadPercent
+        required_sensor_type: Load
+        sensor_count: 11
+        candidate_names: GPU Core, GPU Total, D3D 3D, D3D 
+        recognized_sensors: D3D 3D=0.00, D3D =0.00, D3D =0.00, D3D =0.00
+        readable_sensors: D3D 3D=0.00, D3D Video Decode=0.00, D3D Copy=0.00, D3D Video Processing=0.00, D3D Video Decode=0.00, D3D =0.00, D3D =0.00, D3D =0.00, D3D Overlay=0.00, D3D GDI Render=0.00, D3D Video Processing=0.00
+        excluded_sensors: (none)
+        selected_sensor: D3D 3D
+        measurement_status: Available
+        source: LibreHardwareMonitor:D3D 3D
+        published_value: 0.00
+        published_status: Available
+        diagnosis: reading available
+      - metric: TemperatureC
+        required_sensor_type: Temperature
+        sensor_count: 0
+        candidate_names: GPU Core, GPU Hot Spot, Core, Hot Spot
+        recognized_sensors: (none)
+        readable_sensors: (none)
+        excluded_sensors: (none)
+        selected_sensor: (none)
+        measurement_status: Unsupported
+        source: LibreHardwareMonitor
+        published_value: (none)
+        published_status: Unsupported
+        diagnosis: case 1: no sensor of this type is enumerated on the device
+      - metric: ClockMHz
+        required_sensor_type: Clock
+        sensor_count: 0
+        candidate_names: GPU Core, GPU Memory, GPU SoC
+        recognized_sensors: (none)
+        readable_sensors: (none)
+        excluded_sensors: (none)
+        selected_sensor: (none)
+        measurement_status: Unsupported
+        source: LibreHardwareMonitor
+        published_value: (none)
+        published_status: Unsupported
+        diagnosis: case 1: no sensor of this type is enumerated on the device
+      - metric: VramUsedBytes
+        required_sensor_type: SmallData
+        sensor_count: 3
+        candidate_names: GPU Memory Used, D3D Dedicated Memory Used, VRAM Used, Memory Used
+        recognized_sensors: (none)
+        readable_sensors: D3D Shared Memory Total=8122.38, D3D Shared Memory Used=29.45
+        excluded_sensors: D3D Shared Memory Total=8122.38, D3D Shared Memory Free=(null), D3D Shared Memory Used=29.45
+        selected_sensor: (none)
+        measurement_status: Unsupported
+        source: LibreHardwareMonitor
+        published_value: (none)
+        published_status: Unsupported
+        diagnosis: the only readable sensors of this type were deliberately excluded: they describe a different quantity
+      - metric: VramTotalBytes
+        required_sensor_type: SmallData
+        sensor_count: 3
+        candidate_names: GPU Memory Total, D3D Dedicated Memory Total, VRAM Total, Memory Total
+        recognized_sensors: (none)
+        readable_sensors: D3D Shared Memory Total=8122.38, D3D Shared Memory Used=29.45
+        excluded_sensors: D3D Shared Memory Total=8122.38, D3D Shared Memory Free=(null), D3D Shared Memory Used=29.45
+        selected_sensor: (none)
+        measurement_status: Unsupported
+        source: LibreHardwareMonitor
+        published_value: (none)
+        published_status: Unsupported
+        diagnosis: the only readable sensors of this type were deliberately excluded: they describe a different quantity
+

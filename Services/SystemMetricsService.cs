@@ -33,6 +33,18 @@ namespace System_Monitor.Services
         private MetricsSnapshot? _lastSnapshot;
 
         /// <summary>
+        /// The backend-level state of the most recent sensor read, and the
+        /// per-device traces of what the selection saw.
+        ///
+        /// <para>
+        /// This is what the opt-in diagnostics use to explain an
+        /// unavailable figure. It is not part of the published snapshot: it
+        /// describes how the backend behaved, not what the machine measured.
+        /// </para>
+        /// </summary>
+        private LhmSensorBackendReport _sensorBackendReport = new();
+
+        /// <summary>
         /// The devices the sensor backend reported during the current
         /// collection: the CPUs and the GPUs, with their identities.
         ///
@@ -105,6 +117,18 @@ namespace System_Monitor.Services
         private readonly ScalarCollectorState _gpuVramState = new();
         private readonly ScalarCollectorState _acpiThermalZoneState = new();
 
+        /// <summary>
+        /// Tracks the automatic GPU selection across cycles with a grace
+        /// period for transient telemetry failures.
+        /// </summary>
+        private readonly GpuSelectionTracker _gpuSelectionTracker = new();
+
+        /// <summary>
+        /// Tracks secondary GPU (extra device) eligibility across cycles
+        /// with a grace period for transient telemetry failures.
+        /// </summary>
+        private readonly GpuExtrasTracker _gpuExtrasTracker = new();
+
         // The metric names the scalar collectors publish under.
         private const string CpuLoadMetric = "cpu-load";
         private const string RamUsedMetric = "ram-used";
@@ -163,6 +187,25 @@ namespace System_Monitor.Services
             }
 
             _sensorSource = CreateSensorSource();
+        }
+
+        /// <summary>
+        /// Creates the service with an injected sensor source, for production
+        /// collection integration tests that supply a fake backend.
+        /// </summary>
+        internal SystemMetricsService(SystemMetrics model, NvidiaGpuFallback nvidiaFallback, ILhmSensorSource sensorSource)
+        {
+            _model = model;
+            _nvidiaFallback = nvidiaFallback;
+            _availability = new SensorAvailability();
+            _sensorSource = sensorSource;
+
+            if (GetSystemTimes(out var idle, out var kernel, out var user))
+            {
+                _prevIdle = FileTimeToUInt64(idle);
+                _prevKernel = FileTimeToUInt64(kernel);
+                _prevUser = FileTimeToUInt64(user);
+            }
         }
 
         /// <summary>
@@ -241,6 +284,20 @@ namespace System_Monitor.Services
         }
 
         /// <summary>
+        /// The backend-level state of the most recent sensor read, and the
+        /// per-device traces of what the selection saw.
+        ///
+        /// <para>
+        /// This is what the opt-in diagnostics use to explain an
+        /// unavailable figure — it distinguishes "no such sensor" from
+        /// "the sensor is blocked" from "the name was not recognized" —
+        /// and it is the only place the collection path keeps that
+        /// evidence. It is not part of the published snapshot.
+        /// </para>
+        /// </summary>
+        public LhmSensorBackendReport SensorBackendReport => _sensorBackendReport;
+
+        /// <summary>
         /// The provenance of every reading the device-identified sensor
         /// backend supplies.
         ///
@@ -297,12 +354,20 @@ namespace System_Monitor.Services
         /// </summary>
         private MetricsSnapshot BuildSnapshot(DateTimeOffset timestamp)
         {
+            var extrasResult = _gpuExtrasTracker.Update(
+                _backendGpus,
+                _gpuSelectionTracker.TrackedInstanceId,
+                _lastSnapshot,
+                _gpuLoadState.ToMeasurement(GpuLoadMetric),
+                _gpuLoadState.DeviceIdFor(GpuLoadMetric),
+                _gpuTemperatureState.ToMeasurement(GpuTemperatureMetric),
+                _gpuTemperatureState.DeviceIdFor(GpuTemperatureMetric));
+
             return MetricsSnapshot.Create(
                 timestamp,
                 cpus: _backendCpus,
                 gpus: _backendGpus,
                 readings: _backendReadings,
-                cpuLoadPercent: _cpuLoadState.ToMeasurement(CpuLoadMetric),
                 ramUsedBytes: _memoryState.ToMeasurement(RamUsedMetric),
                 ramTotalBytes: _memoryState.ToMeasurement(RamTotalMetric),
                 ramPercent: _memoryState.ToMeasurement(RamPercentMetric),
@@ -311,6 +376,7 @@ namespace System_Monitor.Services
                 diskPercent: _diskState.ToMeasurement(DiskPercentMetric),
                 networkDownloadBytesPerSec: _networkState.ToMeasurement(NetworkDownMetric),
                 networkUploadBytesPerSec: _networkState.ToMeasurement(NetworkUpMetric),
+                cpuLoadPercent: _cpuLoadState.ToMeasurement(CpuLoadMetric),
                 cpuClockMHz: _cpuClockState.ToMeasurement(CpuClockMetric),
                 cpuTemperatureC: _cpuTemperatureState.ToMeasurement(CpuTemperatureMetric),
                 gpuLoadPercent: _gpuLoadState.ToMeasurement(GpuLoadMetric),
@@ -321,7 +387,9 @@ namespace System_Monitor.Services
                 gpuLoadDeviceId: _gpuLoadState.DeviceIdFor(GpuLoadMetric),
                 gpuTemperatureDeviceId: _gpuTemperatureState.DeviceIdFor(GpuTemperatureMetric),
                 gpuVramUsedDeviceId: _gpuVramState.DeviceIdFor(GpuVramUsedMetric),
-                gpuVramTotalDeviceId: _gpuVramState.DeviceIdFor(GpuVramTotalMetric));
+                gpuVramTotalDeviceId: _gpuVramState.DeviceIdFor(GpuVramTotalMetric),
+                gpuTrackedInstanceId: _gpuSelectionTracker.TrackedInstanceId,
+                gpuTrackedExtraInstanceIds: extrasResult.EligibleInstanceIds);
         }
 
         public void Dispose()
@@ -903,7 +971,19 @@ namespace System_Monitor.Services
         private void UpdateSensorBackend()
         {
             if (_sensorSource is null)
+            {
+                _sensorBackendReport = new LhmSensorBackendReport
+                {
+                    Backend = new LhmBackendReadState
+                    {
+                        Initialized = false,
+                        ReadFailed = true,
+                        FailureReason = "the sensor backend was not created",
+                        ReadAt = DateTimeOffset.UtcNow,
+                    },
+                };
                 return;
+            }
 
             IReadOnlyList<LhmDeviceDescriptor> devices;
             try
@@ -921,6 +1001,17 @@ namespace System_Monitor.Services
                 _availability.ReportUnavailable(
                     "device-sensors",
                     SensorAvailability.Reasons.ReadFailed);
+
+                _sensorBackendReport = new LhmSensorBackendReport
+                {
+                    Backend = new LhmBackendReadState
+                    {
+                        Initialized = _sensorSource.IsAvailable,
+                        ReadFailed = true,
+                        FailureReason = DiagnosticDetail.Describe(ex),
+                        ReadAt = DateTimeOffset.UtcNow,
+                    },
+                };
 
                 return;
             }
@@ -943,6 +1034,22 @@ namespace System_Monitor.Services
                 _backendGpuVramTotal = null;
 
                 _model.GpuLoadPercent = null;
+
+                // An empty device list has two very different causes — the
+                // backend never opened, or it opened and then failed to
+                // reach the hardware — and only the backend knows which.
+                _sensorBackendReport = new LhmSensorBackendReport
+                {
+                    Backend = new LhmBackendReadState
+                    {
+                        Initialized = _sensorSource.IsAvailable,
+                        ReadFailed = !_sensorSource.IsAvailable,
+                        FailureReason = _sensorSource.UnavailableReason,
+                        DeviceCount = 0,
+                        ReadAt = DateTimeOffset.UtcNow,
+                    },
+                };
+
                 return;
             }
 
@@ -955,10 +1062,44 @@ namespace System_Monitor.Services
             var readAt = DateTimeOffset.UtcNow;
             var snapshot = projection.ToSnapshot(readAt);
 
+            _sensorBackendReport = new LhmSensorBackendReport
+            {
+                Backend = new LhmBackendReadState
+                {
+                    Initialized = true,
+                    ReadFailed = false,
+                    FailureReason = null,
+                    DeviceCount = devices.Count,
+                    ReadAt = readAt,
+                },
+                Devices = projection.Traces,
+            };
+
             var primaryCpu = LhmSnapshotMapper.SelectPrimaryCpu(projection.Cpus);
-            var primaryGpu = LhmSnapshotMapper.SelectPrimaryGpu(projection.Gpus);
+            var primaryGpu = _gpuSelectionTracker.Update(
+                projection.Gpus,
+                null, // No user selection at collection time; the presenter handles user selection
+                snapshot,
+                snapshot.GpuLoadPercent,
+                snapshot.GpuLoadDeviceId,
+                snapshot.GpuTemperatureC,
+                snapshot.GpuTemperatureDeviceId,
+                snapshot.GpuVramUsedBytes,
+                snapshot.GpuVramUsedDeviceId,
+                snapshot.GpuVramTotalBytes,
+                snapshot.GpuVramTotalDeviceId);
 
             _lastSnapshot = snapshot;
+
+            // The reason the CPU temperature is or is not available is
+            // recorded once per cycle at debug level. The line names the
+            // cause and the sensor type involved — never a sensor name, a
+            // device identity or an exception message — so the routine log
+            // stays free of the machine's inventory while still saying
+            // whether the figure is missing because there is no sensor,
+            // because the sensor is blocked, or because the name was not
+            // recognized.
+            ReportSensorDiagnoses(projection.Traces);
 
             // The device list and the per-device readings are kept so the
             // published snapshot can carry them: a multi-device widget needs
@@ -1002,6 +1143,44 @@ namespace System_Monitor.Services
             _backendGpuVramTotal = SensorCandidate(
                 snapshot, primaryGpu?.DeviceId, LhmSensorSelection.GpuMemoryTotalMetric,
                 "B", readAt);
+        }
+
+        /// <summary>
+        /// Reports why each backend metric is or is not available, once per
+        /// cycle.
+        ///
+        /// <para>
+        /// The line carries the metric, the sensor type it needs, the
+        /// number of sensors of that type the device exposed, and the
+        /// diagnosis. It deliberately carries no sensor name and no device
+        /// identity: the routine log describes the backend's behaviour, not
+        /// the machine's inventory. The names are in the opt-in inventory,
+        /// which the user asks for.
+        /// </para>
+        /// </summary>
+        private void ReportSensorDiagnoses(IReadOnlyList<LhmSensorTrace> traces)
+        {
+            foreach (var device in traces)
+            {
+                foreach (var metric in device.Metrics)
+                {
+                    if (metric.MeasurementStatus == MeasurementStatus.Available)
+                        continue;
+
+                    var diagnosis = LhmSensorDiagnosisPolicy.Diagnose(
+                        _sensorBackendReport.Backend,
+                        device,
+                        metric,
+                        null);
+
+                    DiagnosticLog.Shared.Debug(
+                        Backend,
+                        metric.Metric,
+                        "unavailable",
+                        detail: $"type={metric.RequiredSensorType} sensors={metric.SensorCount} " +
+                                $"reason={LhmSensorDiagnosisPolicy.Describe(diagnosis)}");
+                }
+            }
         }
 
         /// <summary>

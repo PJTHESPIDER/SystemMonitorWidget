@@ -67,12 +67,14 @@ public class WidgetPayloadPresenterTests
         IEnumerable<HardwareDevice>? cpus = null,
         IEnumerable<HardwareDevice>? gpus = null,
         IEnumerable<DeviceReading>? readings = null,
-        DateTimeOffset? timestamp = null) =>
+        DateTimeOffset? timestamp = null,
+        IReadOnlyList<string>? gpuTrackedExtraInstanceIds = null) =>
         MetricsSnapshot.Create(
             timestamp ?? SampleTime,
             cpus: cpus,
             gpus: gpus,
-            readings: readings);
+            readings: readings,
+            gpuTrackedExtraInstanceIds: gpuTrackedExtraInstanceIds);
 
     // =====================================================================
     // Payload / template binding compatibility
@@ -327,10 +329,22 @@ public class WidgetPayloadPresenterTests
         var snapshot = Snapshot(
             gpus: new[]
             {
+                // The NVIDIA card has telemetry so it becomes primary.
+                // The AMD card with the long name ALSO has telemetry (load),
+                // so it qualifies as an extra device.
                 Gpu("gpu0", "NVIDIA RTX 3080", "NVIDIA", GpuIntegration.Discrete, "pci-0"),
                 Gpu("gpu1", longName, "AMD", GpuIntegration.Discrete, "pci-1"),
             },
-            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
+            // Both cards have load readings. The NVIDIA card (pci-0) wins the
+            // primary selection because it appears first in the list with equal
+            // telemetry and integration class, and its instance id is lower.
+            // The AMD card (pci-1) becomes the extra.
+            readings: new[]
+            {
+                Read("gpu0", "LoadPercent", 10.0),
+                Read("gpu1", "LoadPercent", 5.0),
+            },
+            gpuTrackedExtraInstanceIds: new[] { "pci-1" });
 
         var payload = WidgetPayloadPresenter.Present(snapshot);
 
@@ -776,13 +790,132 @@ public class WidgetPayloadPresenterTests
     }
 
     // =====================================================================
-    // Cross-device attribution
+    // Repeated-snapshot freshness
     //
-    // The snapshot's scalar GPU figures describe whichever device the
-    // collection chose as primary. They are a valid fallback for the
-    // default selection, but they must never be presented under a device
-    // the user explicitly chose, nor under a different card's name.
+    // Present() uses the snapshot's own timestamp for staleness by default,
+    // so presenting the same snapshot multiple times produces the same
+    // staleness result. When the presenter is called with an explicit
+    // currentTime that has advanced beyond the stale threshold, the payload
+    // must reflect the now-stale measurements.
     // =====================================================================
+
+    [Fact]
+    public void RepeatedPresentation_WithAdvancedTime_MarksMeasurementsStale()
+    {
+        // Snapshot collected at T=0 with CPU/GPU load readings from T=-5s.
+        // The readings are fresh at T=0 (age=5s < 30s threshold).
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            gpus: new[] { Gpu("gpu0", "NVIDIA GeForce RTX 3080", "NVIDIA", GpuIntegration.Discrete, "pci-0") },
+            cpuLoadPercent: Measurement.AvailableValue(25.0, "%", "test", SampleTime.AddSeconds(-5)),
+            readings: new[]
+            {
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "LoadPercent",
+                    Measurement = Measurement.AvailableValue(30.0, "%", "test", SampleTime.AddSeconds(-5)),
+                },
+            });
+
+        // First presentation at snapshot time — measurements are fresh.
+        var payloadInitial = WidgetPayloadPresenter.Present(snapshot);
+
+        Assert.Equal("25.0%", payloadInitial.GetText(WidgetPayloadPresenter.CpuKey));
+        Assert.Equal("30.0%", payloadInitial.GetText(WidgetPayloadPresenter.GpuKey));
+        Assert.False(payloadInitial.GetFlag(WidgetPayloadPresenter.SampleIsStaleKey));
+
+        // Same snapshot, but presented 40 seconds later — measurements are now stale.
+        var laterTime = SampleTime.AddSeconds(40);
+        var payloadLater = WidgetPayloadPresenter.PresentForPublication(snapshot, null, new FixedTimeProvider(laterTime));
+
+        // The established stale-display policy:
+        // - Individual old measurement fields show a stale marker.
+        // - The SampleIsStaleKey flag is set to true, indicating the overall
+        //   snapshot's most recent successful reading is older than the threshold.
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payloadLater.GetText(WidgetPayloadPresenter.CpuKey));
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payloadLater.GetText(WidgetPayloadPresenter.GpuKey));
+        Assert.True(payloadLater.GetFlag(WidgetPayloadPresenter.SampleIsStaleKey));
+
+        // Confirm the snapshot and its measurements are unchanged (immutability).
+        Assert.Equal(SampleTime, snapshot.Timestamp);
+        Assert.Equal(MeasurementStatus.Available, snapshot.CpuLoadPercent!.Status);
+        Assert.Equal(MeasurementStatus.Available, snapshot.Readings[0]!.Measurement.Status);
+    }
+
+    [Fact]
+    public void MixedAgeSnapshot_StalesCpuAndGpuButKeepsFreshRamAndNetwork()
+    {
+        var now = SampleTime.AddSeconds(40);
+        var old = SampleTime.AddSeconds(-5);
+        var fresh = now.AddSeconds(-1);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            gpus: new[] { Gpu("gpu0", "NVIDIA GeForce RTX 3080", "NVIDIA", GpuIntegration.Discrete, "pci-0") },
+            cpuLoadPercent: Measurement.AvailableValue(25, "%", "test", old),
+            ramUsedBytes: Measurement.AvailableValue(100, "B", "test", fresh),
+            networkDownloadBytesPerSec: Measurement.AvailableValue(12, "B/s", "test", fresh),
+            readings: new[] { new DeviceReading { DeviceId = "gpu0", Metric = "LoadPercent", Measurement = Measurement.AvailableValue(30, "%", "test", old) } });
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, null, new FixedTimeProvider(now));
+
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.CpuKey));
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.GpuKey));
+        Assert.NotEqual(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.RamUsedKey));
+        Assert.NotEqual(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.NetDownKey));
+        Assert.Equal(MeasurementStatus.Available, snapshot.CpuLoadPercent!.Status);
+        Assert.Equal(25, snapshot.CpuLoadPercent.Value);
+        Assert.Equal(old, snapshot.CpuLoadPercent.LastSuccessfulUpdate);
+        Assert.Equal(MeasurementStatus.Available, snapshot.Readings[0]!.Measurement.Status);
+        Assert.Equal(30, snapshot.Readings[0].Measurement.Value);
+        Assert.Equal(old, snapshot.Readings[0].Measurement.LastSuccessfulUpdate);
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    [Fact]
+    public void EveryCardSize_BindsExceptionalStaleNoticeToAggregateFlag()
+    {
+        Assert.Contains("${sampleIsStale}", WidgetTemplates.SmallTemplate);
+        Assert.Contains("${sampleIsStale}", WidgetTemplates.MediumTemplate);
+        Assert.Contains("${sampleIsStale}", WidgetTemplates.LargeTemplate);
+        Assert.Contains("Telemetry is stale", WidgetTemplates.SmallTemplate);
+        Assert.Contains("Telemetry is stale", WidgetTemplates.MediumTemplate);
+        Assert.Contains("Telemetry is stale", WidgetTemplates.LargeTemplate);
+    }
+
+    [Fact]
+    public void RepeatedPresentation_WithoutAdvancingTime_DoesNotMarkStale()
+    {
+        // Presenting the same snapshot multiple times without advancing time
+        // should not change the staleness result.
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            gpus: new[] { Gpu("gpu0", "NVIDIA GeForce RTX 3080", "NVIDIA", GpuIntegration.Discrete, "pci-0") },
+            cpuLoadPercent: Measurement.AvailableValue(25.0, "%", "test", SampleTime.AddSeconds(-5)),
+            readings: new[]
+            {
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "LoadPercent",
+                    Measurement = Measurement.AvailableValue(30.0, "%", "test", SampleTime.AddSeconds(-5)),
+                },
+            });
+
+        var payload1 = WidgetPayloadPresenter.Present(snapshot);
+        var payload2 = WidgetPayloadPresenter.Present(snapshot);
+        var payload3 = WidgetPayloadPresenter.Present(snapshot);
+
+        Assert.False(payload1.GetFlag(WidgetPayloadPresenter.SampleIsStaleKey));
+        Assert.False(payload2.GetFlag(WidgetPayloadPresenter.SampleIsStaleKey));
+        Assert.False(payload3.GetFlag(WidgetPayloadPresenter.SampleIsStaleKey));
+        Assert.Equal(payload1.GetText(WidgetPayloadPresenter.CpuKey), payload2.GetText(WidgetPayloadPresenter.CpuKey));
+        Assert.Equal(payload2.GetText(WidgetPayloadPresenter.CpuKey), payload3.GetText(WidgetPayloadPresenter.CpuKey));
+    }
 
     [Fact]
     public void AScalarFromAnotherDevice_IsNotPresentedForTheSelectedDevice()
@@ -1387,7 +1520,8 @@ public class WidgetPayloadPresenterTests
                 Read("gpu1", "TemperatureC", 65.0, "°C"),
                 Read("gpu1", "VramUsedBytes", 4_000_000_000.0, "B"),
                 Read("gpu1", "VramTotalBytes", 8_000_000_000.0, "B"),
-            });
+            },
+            gpuTrackedExtraInstanceIds: new[] { "pci-intel-0" });
 
     private static MetricsSnapshot IdenticalNameSnapshot() =>
         Snapshot(

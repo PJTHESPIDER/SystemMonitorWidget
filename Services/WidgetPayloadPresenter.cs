@@ -77,6 +77,7 @@ namespace System_Monitor.Services
         public const string CpuTempKey = "cpuTemp";
         public const string CpuNameKey = "cpuName";
         public const string CpuVendorKey = "cpuVendor";
+        public const string CpuNameCompactKey = "cpuNameCompact";
 
         public const string GpuKey = "gpu";
         public const string GpuTempKey = "gpuTemp";
@@ -91,6 +92,8 @@ namespace System_Monitor.Services
         public const string GpuLabelCompactKey = "gpuLabelCompact";
         public const string GpuExtrasKey = "gpuExtras";
         public const string GpuSelectionNoticeKey = "gpuSelectionNotice";
+        public const string GpuNameCompactKey = "gpuNameCompact";
+        public const string GpuMemoryCapacityCompactKey = "gpuMemoryCapacityCompact";
 
         public const string RamKey = "ram";
         public const string RamUsedKey = "ramUsed";
@@ -98,6 +101,7 @@ namespace System_Monitor.Services
         public const string RamCombinedKey = "ramCombined";
         public const string RamPercentKey = "ramPercent";
         public const string RamCompactKey = "ramCompact";
+        public const string RamCapacityCompactKey = "ramCapacityCompact";
 
         public const string DiskKey = "disk";
         public const string DiskUsedKey = "diskUsed";
@@ -105,6 +109,7 @@ namespace System_Monitor.Services
         public const string DiskCombinedKey = "diskCombined";
         public const string DiskPercentKey = "diskPercent";
         public const string DiskCompactKey = "diskCompact";
+        public const string DiskCapacityCompactKey = "diskCapacityCompact";
 
         public const string NetDownKey = "netDown";
         public const string NetUpKey = "netUp";
@@ -120,13 +125,13 @@ namespace System_Monitor.Services
         /// </summary>
         public static readonly IReadOnlyList<string> TextKeys = new[]
         {
-            CpuKey, CpuClockKey, CpuTempKey, CpuNameKey, CpuVendorKey,
+            CpuKey, CpuClockKey, CpuTempKey, CpuNameKey, CpuVendorKey, CpuNameCompactKey,
             GpuKey, GpuTempKey, GpuVramKey, GpuVramUsedKey, GpuVramLabelKey,
             GpuVramLabelCompactKey,
             GpuNameKey, GpuVendorKey, GpuIntegrationKey, GpuLabelKey, GpuLabelCompactKey,
-            GpuExtrasKey, GpuSelectionNoticeKey,
-            RamKey, RamUsedKey, RamTotalKey, RamCombinedKey, RamPercentKey, RamCompactKey,
-            DiskKey, DiskUsedKey, DiskTotalKey, DiskCombinedKey, DiskPercentKey, DiskCompactKey,
+            GpuExtrasKey, GpuSelectionNoticeKey, GpuNameCompactKey, GpuMemoryCapacityCompactKey,
+            RamKey, RamUsedKey, RamTotalKey, RamCombinedKey, RamPercentKey, RamCompactKey, RamCapacityCompactKey,
+            DiskKey, DiskUsedKey, DiskTotalKey, DiskCombinedKey, DiskPercentKey, DiskCompactKey, DiskCapacityCompactKey,
             NetDownKey, NetUpKey, TempSummaryKey, AcpiThermalZoneTempKey,
             SampleTimeKey, LastUpdatedKey,
         };
@@ -177,12 +182,20 @@ namespace System_Monitor.Services
         /// <param name="maxExtraDevices">
         /// How many additional GPUs may be described, beyond the presented
         /// one. This is a cap, not a quota: a device is only described when
-        /// there is one to describe.
+        /// there is one to describe with usable telemetry.
+        /// </param>
+        /// <param name="currentTime">
+        /// The time at which the payload is being presented. Used for
+        /// staleness checks. Defaults to <paramref name="snapshot"/>.Timestamp
+        /// for backward compatibility, but callers that re-present the same
+        /// snapshot after time has elapsed should pass the current time so
+        /// that measurements older than the stale threshold are marked stale.
         /// </param>
         public static WidgetPayload Present(
             MetricsSnapshot? snapshot,
             string? selectedGpuInstanceId = null,
-            int maxExtraDevices = MaxExtraDevices)
+            int maxExtraDevices = MaxExtraDevices,
+            DateTimeOffset? currentTime = null)
         {
             var text = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var flags = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
@@ -196,14 +209,27 @@ namespace System_Monitor.Services
             // always the right ones to show.
             var cpuDevice = LhmSnapshotMapper.SelectPrimaryCpu(snapshot.Cpus);
 
-            text[CpuKey] = FormatPercent(snapshot.CpuLoadPercent);
-            text[CpuClockKey] = FormatClock(snapshot.CpuClockMHz);
-            text[CpuTempKey] = FormatTemperature(snapshot.CpuTemperatureC);
+            var now = currentTime ?? snapshot.Timestamp;
+            text[CpuKey] = FormatAtTime(snapshot.CpuLoadPercent, ByteFormatter.FormatPercent, now);
+            text[CpuClockKey] = FormatAtTime(snapshot.CpuClockMHz, ByteFormatter.FormatClock, now);
+            text[CpuTempKey] = FormatAtTime(snapshot.CpuTemperatureC, ByteFormatter.FormatTemperature, now);
             text[CpuNameKey] = FormatDeviceName(cpuDevice?.DisplayName);
             text[CpuVendorKey] = FormatVendor(cpuDevice?.Vendor);
+            text[CpuNameCompactKey] = NormalizeHardwareName(cpuDevice?.DisplayName);
 
             // --- GPU: the presented device -----------------------------------
-            var selection = GpuSelectionPolicy.Resolve(snapshot.Gpus, selectedGpuInstanceId);
+            var selection = GpuSelectionPolicy.Resolve(
+                snapshot.Gpus,
+                selectedGpuInstanceId,
+                snapshot,
+                snapshot.GpuLoadPercent,
+                snapshot.GpuLoadDeviceId,
+                snapshot.GpuTemperatureC,
+                snapshot.GpuTemperatureDeviceId,
+                snapshot.GpuVramUsedBytes,
+                snapshot.GpuVramUsedDeviceId,
+                snapshot.GpuVramTotalBytes,
+                snapshot.GpuVramTotalDeviceId);
             var gpu = selection.Device;
 
             // The snapshot's scalar GPU figures describe whichever device the
@@ -217,6 +243,26 @@ namespace System_Monitor.Services
             // primary GPU while the temperature comes from the reconciled
             // NVIDIA fallback for a different card. A figure is used only
             // when it names the device being presented.
+            //
+            // IMPORTANT: When the collector's tracker is in grace mode (retaining
+            // a device despite missing telemetry), the snapshot's scalar figures
+            // describe that tracked device. We must present the tracked device
+            // to match those figures, even if another device currently has telemetry.
+            // The tracker's instance id is stored in GpuTrackedInstanceId.
+            if (selectedGpuInstanceId is null && snapshot.GpuTrackedInstanceId is not null)
+            {
+                // Tracker is in grace mode: present the tracked device to match
+                // the scalar figures. The selection policy would pick a device
+                // with current telemetry, but that would attribute the tracked
+                // device's scalar figures to the wrong card.
+                var tracked = snapshot.Gpus.FirstOrDefault(g =>
+                    string.Equals(g.InstanceId, snapshot.GpuTrackedInstanceId, StringComparison.OrdinalIgnoreCase));
+                if (tracked is not null)
+                {
+                    gpu = tracked;
+                }
+            }
+
             var gpuLoad = ResolveMetric(
                 snapshot, gpu?.DeviceId, LhmSensorSelection.GpuLoadMetric,
                 snapshot.GpuLoadPercent, snapshot.GpuLoadDeviceId).Measurement;
@@ -235,9 +281,10 @@ namespace System_Monitor.Services
             text[GpuIntegrationKey] = FormatIntegration(gpu?.GpuIntegration);
             text[GpuLabelKey] = ComposeDeviceLabel(gpu, maxLength: 40);
             text[GpuLabelCompactKey] = ComposeDeviceLabel(gpu, maxLength: 24, includeIntegration: false);
+            text[GpuNameCompactKey] = NormalizeHardwareName(gpu?.DisplayName);
 
-            text[GpuKey] = FormatPercent(gpuLoad);
-            text[GpuTempKey] = FormatTemperature(gpuTemp);
+            text[GpuKey] = FormatAtTime(gpuLoad, ByteFormatter.FormatPercent, now);
+            text[GpuTempKey] = FormatAtTime(gpuTemp, ByteFormatter.FormatTemperature, now);
 
             // The memory label and the memory figures are resolved
             // together, because the label is a claim about the same
@@ -255,6 +302,9 @@ namespace System_Monitor.Services
             text[GpuVramKey] = gpuMemory.Display;
             text[GpuVramLabelKey] = GpuMemoryPresentation.LabelText(gpuMemory.Label);
             text[GpuVramLabelCompactKey] = GpuMemoryPresentation.CompactLabelText(gpuMemory.Label);
+
+            // GPU memory capacity compact - use the compact display from the resolved presentation
+            text[GpuMemoryCapacityCompactKey] = gpuMemory.CompactDisplay;
 
             flags[GpuDevicePresentKey] = gpu is not null;
             flags[GpuSelectionMissingKey] = selection.Outcome == GpuSelectionOutcome.SelectionMissing;
@@ -290,6 +340,9 @@ namespace System_Monitor.Services
             text[RamCombinedKey] = $"{text[RamUsedKey]} / {text[RamTotalKey]}";
             text[RamPercentKey] = FormatPercent(snapshot.RamPercent);
             text[RamCompactKey] = $"{text[RamUsedKey]} ({text[RamPercentKey]})";
+            text[RamCapacityCompactKey] = ByteFormatter.FormatCapacityCompact(
+                GetValueOrDefault(snapshot.RamUsedBytes),
+                GetValueOrDefault(snapshot.RamTotalBytes));
 
             // --- Disk --------------------------------------------------------
             text[DiskKey] = FormatUsage(snapshot.DiskUsedBytes, snapshot.DiskTotalBytes, snapshot.DiskPercent);
@@ -298,6 +351,9 @@ namespace System_Monitor.Services
             text[DiskCombinedKey] = $"{text[DiskUsedKey]} / {text[DiskTotalKey]}";
             text[DiskPercentKey] = FormatPercent(snapshot.DiskPercent);
             text[DiskCompactKey] = $"{text[DiskUsedKey]} ({text[DiskPercentKey]})";
+            text[DiskCapacityCompactKey] = ByteFormatter.FormatCapacityCompact(
+                GetValueOrDefault(snapshot.DiskUsedBytes),
+                GetValueOrDefault(snapshot.DiskTotalBytes));
 
             // --- Network -----------------------------------------------------
             text[NetDownKey] = FormatNetworkSpeed(snapshot.NetworkDownloadBytesPerSec);
@@ -321,13 +377,20 @@ namespace System_Monitor.Services
             // than the current collection is marked stale rather than
             // implying the value is current.
             var sample = MostRecentSuccessfulSample(snapshot);
-            var isStale = IsStale(sample, snapshot.Timestamp);
+            var isStale = IsStale(sample, now);
             text[SampleTimeKey] = sample?.ToString("h:mm:ss tt", CultureInfo.CurrentCulture) ?? NotAvailable;
             text[LastUpdatedKey] = text[SampleTimeKey];
             flags[SampleIsStaleKey] = isStale;
 
             return new WidgetPayload(text, flags);
         }
+
+        /// <summary>Production publication boundary: evaluates the immutable snapshot against the injected clock at publish time.</summary>
+        public static WidgetPayload PresentForPublication(
+            MetricsSnapshot? snapshot,
+            string? selectedGpuInstanceId,
+            TimeProvider timeProvider) =>
+            Present(snapshot, selectedGpuInstanceId, currentTime: (timeProvider ?? throw new ArgumentNullException(nameof(timeProvider))).GetUtcNow());
 
         /// <summary>
         /// Fills a payload with the "not available" placeholder for every
@@ -368,8 +431,25 @@ namespace System_Monitor.Services
             // all it claims no memory pool.
             text[GpuVramLabelKey] = GpuMemoryPresentation.UnspecifiedLabel;
             text[GpuVramLabelCompactKey] = GpuMemoryPresentation.UnspecifiedLabel;
+            text[GpuMemoryCapacityCompactKey] = NotAvailable;
+            text[RamCapacityCompactKey] = NotAvailable;
+            text[DiskCapacityCompactKey] = NotAvailable;
 
             return new WidgetPayload(text, flags);
+        }
+
+        /// <summary>
+        /// Gets the double value of a measurement or 0 if not available.
+        /// </summary>
+        private static double GetValueOrDefault(Measurement? measurement)
+        {
+            if (measurement is not null
+                && measurement.Status == MeasurementStatus.Available
+                && measurement.Value.HasValue)
+            {
+                return measurement.Value.Value;
+            }
+            return 0;
         }
 
         // ------------------------------------------------------------------
@@ -379,6 +459,12 @@ namespace System_Monitor.Services
         /// <summary>
         /// Describes the GPUs other than the presented one, in the
         /// presentation order, up to <paramref name="max"/> of them.
+        ///
+        /// Devices are included based on the collector's extras tracker,
+        /// which retains eligible devices through a grace period for
+        /// transient telemetry failures. Only devices the tracker has
+        /// qualified (seen usable load or temperature) and has not yet
+        /// removed are presented.
         /// </summary>
         private static List<string> BuildExtras(
             MetricsSnapshot snapshot,
@@ -389,7 +475,20 @@ namespace System_Monitor.Services
             if (max <= 0)
                 return extras;
 
-            foreach (var device in GpuSelectionPolicy.OrderForPresentation(snapshot.Gpus))
+            // Use the collector's tracked extra instance ids. These represent
+            // devices that have qualified and are within their grace period.
+            var trackedExtraInstanceIds = snapshot.GpuTrackedExtraInstanceIds ?? Array.Empty<string>();
+
+            // Order them by the same presentation policy.
+            var orderedExtras = GpuSelectionPolicy.OrderExtrasForPresentation(
+                snapshot.Gpus,
+                snapshot,
+                snapshot.GpuLoadPercent,
+                snapshot.GpuLoadDeviceId,
+                snapshot.GpuTemperatureC,
+                snapshot.GpuTemperatureDeviceId);
+
+            foreach (var device in orderedExtras)
             {
                 if (extras.Count >= max)
                     break;
@@ -400,6 +499,10 @@ namespace System_Monitor.Services
                 {
                     continue;
                 }
+
+                // Only include devices that are in the tracker's eligible set.
+                if (!trackedExtraInstanceIds.Contains(device.InstanceId, StringComparer.OrdinalIgnoreCase))
+                    continue;
 
                 var load = DeviceMetric(snapshot, device.DeviceId, LhmSensorSelection.GpuLoadMetric);
                 var temp = DeviceMetric(snapshot, device.DeviceId, LhmSensorSelection.GpuTemperatureMetric);
@@ -534,6 +637,124 @@ namespace System_Monitor.Services
             GpuIntegration.Discrete => "discrete",
             _ => string.Empty,
         };
+
+        /// <summary>
+        /// Normalizes a hardware name for compact presentation.
+        ///
+        /// Contract:
+        /// - Removes leading manufacturer prefix (AMD, Intel, NVIDIA, Nvidia) but preserves
+        ///   "Core" in "Intel Core" and "Ryzen" in "AMD Ryzen"
+        /// - Removes trailing "Processor", "CPU", "APU", "Graphics", "GPU" suffixes
+        /// - Removes trademark markers (R), (TM), etc.
+        /// - Preserves model numbers, meaningful suffixes (X3D, XT, Ti, Super, etc.),
+        ///   and Laptop/Mobile distinctions
+        /// - Trims excessive whitespace and normalizes to single spaces
+        /// - Falls back to original trimmed name if normalization would produce empty
+        /// - Does not modify the original full name (used for tooltips/full display)
+        /// </summary>
+        public static string NormalizeHardwareName(string? displayName)
+        {
+            if (string.IsNullOrWhiteSpace(displayName))
+                return NotAvailable;
+
+            var name = displayName.Trim();
+
+            // Remove trademark markers first (e.g., "Intel(R) Core(TM)" -> "Intel Core")
+            name = System.Text.RegularExpressions.Regex.Replace(name, @"\s*\([RTM]{1,2}\)\s*", " ");
+
+            // Remove manufacturer prefixes but preserve model family identifiers (GeForce, Radeon, Ryzen, Core, etc.)
+            // Order matters: LONGER specific patterns first, then generic manufacturer names
+            // We remove "Intel " to leave "Core i7", but we remove only "NVIDIA " to leave "GeForce RTX"
+            // "AMD " removes to leave "Ryzen 7", "Radeon RX" - preserving the model family
+            var manufacturerPrefixes = new[]
+            {
+                "Intel(R) ",        // "Intel(R) i7" -> "i7", "Intel(R) Core i7" -> "Core i7"
+                "Intel ",           // "Intel i7" -> "i7", "Intel Core i7" -> "Core i7"
+                "AMD ",             // "AMD Ryzen 7" -> "Ryzen 7", "AMD Radeon RX" -> "Radeon RX", "AMD APU" -> "APU"
+                "NVIDIA ",          // "NVIDIA GeForce RTX" -> "GeForce RTX", "NVIDIA Quadro" -> "Quadro", "NVIDIA GPU" -> "GPU"
+                "Nvidia ",          // "Nvidia GeForce RTX" -> "GeForce RTX", "Nvidia Quadro" -> "Quadro", "Nvidia GPU" -> "GPU"
+            };
+
+            foreach (var prefix in manufacturerPrefixes)
+            {
+                if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    name = name.Substring(prefix.Length);
+                    break; // Only remove one prefix
+                }
+            }
+
+            // Now handle the "Core " prefix that we want to keep for Intel Core models
+            // If the name starts with "Core " and looks like an Intel CPU model (followed by i3/i5/i7/i9 or numbers),
+            // KEEP "Core". Otherwise remove it (e.g., "Core 2 Duo" -> "2 Duo", "Core Solo" -> "Solo").
+            if (name.StartsWith("Core ", StringComparison.OrdinalIgnoreCase))
+            {
+                var afterCore = name.Substring(5).TrimStart();
+                // Check if it looks like an Intel Core model (i3/i5/i7/i9 or similar)
+                bool isIntelCoreModel = System.Text.RegularExpressions.Regex.IsMatch(afterCore, @"^i[3579]\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                    || System.Text.RegularExpressions.Regex.IsMatch(afterCore, @"^\d+[\s\-]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+                if (!isIntelCoreModel)
+                {
+                    name = afterCore;
+                }
+            }
+
+            // Also handle cases where suffix is followed by additional text like "@ 2.30GHz"
+            // Remove " CPU" (but keep "@ 2.30GHz"), " Processor" etc. when followed by "@"
+            var trailingSuffixesWithContent = new[]
+            {
+                " CPU", " cpu",
+                " Processor", " processor",
+                " APU", " apu",
+            };
+
+            foreach (var suffix in trailingSuffixesWithContent)
+            {
+                int idx = name.IndexOf(suffix + " @", StringComparison.OrdinalIgnoreCase);
+                if (idx >= 0)
+                {
+                    // Remove the suffix but keep everything after " @"
+                    var afterAt = name.Substring(idx + suffix.Length); // starts with " @..."
+                    name = name.Substring(0, idx).Trim() + " " + afterAt.Trim();
+                    break;
+                }
+            }
+
+            // Remove trailing "Processor", "CPU", "APU", "Graphics", "GPU" (case-insensitive)
+            // But preserve "Mobile", "Laptop" and meaningful model suffixes
+            // These are removed only when they appear at the END of the name
+            var trailingSuffixes = new[]
+            {
+                "Processor", " processor",
+                "CPU", " cpu",
+                "APU", " apu",
+                "Graphics", " graphics",
+                "GPU", " gpu",
+            };
+
+            foreach (var suffix in trailingSuffixes)
+            {
+                if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Also handle leading space if present
+                    int startIdx = name.Length - suffix.Length;
+                    if (startIdx > 0 && name[startIdx - 1] == ' ')
+                        startIdx--;
+                    name = name.Substring(0, startIdx);
+                    break; // Only remove one suffix
+                }
+            }
+
+            // Normalize whitespace: collapse multiple spaces to single
+            name = System.Text.RegularExpressions.Regex.Replace(name, @"\s+", " ").Trim();
+
+            // Fallback to original if normalization produced empty
+            if (string.IsNullOrWhiteSpace(name))
+                return displayName.Trim();
+
+            return name;
+        }
 
         /// <summary>
         /// Combines the CPU and GPU temperatures into one summary, showing
@@ -715,6 +936,15 @@ namespace System_Monitor.Services
                 return NotAvailable;
 
             return formatter(measurement.Value.Value);
+        }
+
+        private static string FormatAtTime(Measurement? measurement, Func<double, string> formatter, DateTimeOffset now)
+        {
+            if (measurement?.Status == MeasurementStatus.Available
+                && measurement.LastSuccessfulUpdate.HasValue
+                && now - measurement.LastSuccessfulUpdate.Value > StaleThreshold)
+                return StaleMarker;
+            return Format(measurement, formatter);
         }
 
         /// <summary>

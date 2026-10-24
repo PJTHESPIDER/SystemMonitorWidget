@@ -244,7 +244,9 @@ namespace System_Monitor.Models
             string? gpuLoadDeviceId = null,
             string? gpuTemperatureDeviceId = null,
             string? gpuVramUsedDeviceId = null,
-            string? gpuVramTotalDeviceId = null) =>
+            string? gpuVramTotalDeviceId = null,
+            string? gpuTrackedInstanceId = null,
+            IReadOnlyList<string>? gpuTrackedExtraInstanceIds = null) =>
             new()
             {
                 Timestamp = timestamp,
@@ -271,6 +273,10 @@ namespace System_Monitor.Models
                 GpuTemperatureDeviceId = gpuTemperatureDeviceId,
                 GpuVramUsedDeviceId = gpuVramUsedDeviceId,
                 GpuVramTotalDeviceId = gpuVramTotalDeviceId,
+                GpuTrackedInstanceId = gpuTrackedInstanceId,
+                GpuTrackedExtraInstanceIds = gpuTrackedExtraInstanceIds is null
+                    ? Array.Empty<string>()
+                    : Array.AsReadOnly(gpuTrackedExtraInstanceIds.ToArray()),
             };
 
         /// <summary>System-level RAM measurement (not tied to a single device).</summary>
@@ -371,5 +377,25 @@ namespace System_Monitor.Models
         /// a confirmed CPU or GPU temperature.
         /// </summary>
         public Measurement? AcpiThermalZoneTemperatureC { get; init; }
+
+        /// <summary>
+        /// The instance id of the GPU the collector's selection tracker is
+        /// currently presenting as the default (automatic) device. This is set
+        /// when the tracker retains a device through its grace period despite
+        /// missing telemetry. The presenter uses this to know which device the
+        /// collection's scalar figures describe when the tracker is in grace
+        /// mode. Null when no tracker is active or the tracker has no device.
+        /// </summary>
+        public string? GpuTrackedInstanceId { get; init; }
+
+        /// <summary>
+        /// The instance ids of secondary GPUs the collector's extras tracker
+        /// has retained through its grace period despite missing displayed
+        /// telemetry. The presenter uses this to know which devices to present
+        /// as extra rows when they are in grace mode. Empty when no extras
+        /// are tracked or the tracker has no eligible devices.
+        /// </summary>
+        public IReadOnlyList<string> GpuTrackedExtraInstanceIds { get; init; } =
+            Array.Empty<string>();
     }
 }

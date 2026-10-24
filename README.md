@@ -10,9 +10,9 @@ See [docs/build-and-package.md](docs/build-and-package.md) for the build, test, 
 
 # Features
 
-CPU — utilization and clock speed
+CPU — utilization, clock speed, and temperature where readings are available
 
-GPU — best-effort utilization, temperature, and VRAM readings; availability varies by hardware (temperature and VRAM try nvidia-smi first, then WMI; utilization uses WMI performance counters)
+GPU — best-effort utilization, temperature, and memory readings; availability varies by hardware. On multi-GPU systems, the widget chooses a primary device automatically and may show eligible secondary devices; there is no in-widget device picker.
 
 Memory — RAM usage
 
@@ -20,4 +20,4 @@ Disk — system drive utilization
 
 Network — upload/download throughput
 
-Temperatures — CPU and GPU temperature where sensors are exposed to Windows
+Temperatures — CPU and GPU readings where sensors are available; unavailable values are shown as N/A
