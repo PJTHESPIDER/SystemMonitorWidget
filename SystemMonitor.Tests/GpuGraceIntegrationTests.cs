@@ -603,9 +603,180 @@ public sealed class GpuGraceIntegrationTests
         Assert.Equal(gpu1.InstanceId, GetPrimaryGpuInstanceId(payload5, snapshot5));
     }
 
-    // ============================================================
-    // Helpers
-    // ============================================================
+    /// <summary>
+    /// End-to-end test verifying the complete service → snapshot → presenter pipeline
+    /// for the secondary → primary → secondary role transition with grace history reset.
+    /// This ensures the fix works through the full stack.
+    ///
+    /// Note: The primary tracker uses graceCycles=0 to allow immediate role transition
+    /// when the primary loses telemetry and another GPU has telemetry. This is a
+    /// test-specific configuration to exercise the extras tracker's role transition
+    /// logic without waiting for the primary tracker's grace period to exhaust.
+    /// </summary>
+    [Fact]
+    public void EndToEnd_SecondaryToPrimaryToSecondary_PresenterShowsCorrectExtras()
+    {
+        var time = new FakeTimeProvider();
+        // Primary tracker uses graceCycles=0 so role transition happens immediately
+        // when primary loses telemetry and another GPU has telemetry.
+        // This tests the EXTRAS tracker's role transition handling, not primary grace.
+        var tracker = new GpuSelectionTracker(graceCycles: 0, time);
+        var extrasTracker = new GpuExtrasTracker(graceCycles: 3, time);
+
+        // Two discrete GPUs: gpu0 (primary), gpu1 (secondary)
+        // gpu0 is the RTX 2070 Super (InstanceId ends in 0008), gpu1 is RTX 3070 (InstanceId ends in 0010)
+        // Both are discrete/unknown, so the tie-break is by InstanceId. gpu0's InstanceId is lexicographically smaller.
+        var gpu0 = LhmFixtures.NvidiaGpu(readable: true);
+        gpu0 = gpu0 with
+        {
+            DeviceId = "/gpu-nvidia/0",
+            DisplayName = "NVIDIA GeForce RTX 2070 Super",
+            PciDeviceKey = "VEN_10DE&DEV_1E84",
+            InstanceId = @"PCI\VEN_10DE&DEV_1E84&SUBSYS_12341458\4&7AADB68&0&0008",
+        };
+        var gpu1 = LhmFixtures.NvidiaGpu(readable: true);
+        gpu1 = gpu1 with
+        {
+            DeviceId = "/gpu-nvidia/1",
+            DisplayName = "NVIDIA GeForce RTX 3070",
+            PciDeviceKey = "VEN_10DE&DEV_2206",
+            InstanceId = @"PCI\VEN_10DE&DEV_2206&SUBSYS_12341458\4&7AADB68&0&0010",
+        };
+
+        string? trackedGpuDeviceId = null;
+
+        // --- CYCLE 1: Initial success - both GPUs have telemetry ---
+        var (snapshot1, payload1, _, _, nextTracked1) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1 }, trackedGpuDeviceId: trackedGpuDeviceId);
+        trackedGpuDeviceId = nextTracked1;
+
+        // gpu1 should appear as extra (has telemetry)
+        Assert.True(payload1.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.Contains(gpu1.InstanceId, snapshot1.GpuTrackedExtraInstanceIds);
+
+        time.Advance(TimeSpan.FromSeconds(1));
+
+        // --- CYCLE 2: gpu1 loses telemetry (failure 1 as secondary) ---
+        var gpu1NoTelemetry = gpu1 with { Sensors = new List<LhmSensorDescriptor>() };
+        var (snapshot2, payload2, _, _, nextTracked2) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
+        trackedGpuDeviceId = nextTracked2;
+        Assert.True(payload2.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1))); // Retained (failure 1)
+
+        time.Advance(TimeSpan.FromSeconds(1));
+
+        // --- CYCLE 3: gpu1 loses telemetry (failure 2 as secondary) ---
+        var (snapshot3, payload3, _, _, nextTracked3) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
+        trackedGpuDeviceId = nextTracked3;
+        Assert.True(payload3.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1))); // Retained (failure 2)
+
+        time.Advance(TimeSpan.FromSeconds(1));
+
+        // --- CYCLE 4: gpu0 loses telemetry, gpu1 becomes primary ---
+        var gpu0NoTelemetry = gpu0 with { Sensors = new List<LhmSensorDescriptor>() };
+        var (snapshot4, payload4, tracker4, extrasTracker4, nextTracked4) = RunCycle(time, tracker, extrasTracker, new[] { gpu0NoTelemetry, gpu1 }, trackedGpuDeviceId: trackedGpuDeviceId);
+        trackedGpuDeviceId = nextTracked4;
+        // gpu1 is now primary, so no extras shown
+        Assert.Equal(gpu1.InstanceId, GetPrimaryGpuInstanceId(payload4, snapshot4));
+        Assert.Empty(snapshot4.GpuTrackedExtraInstanceIds);
+
+        time.Advance(TimeSpan.FromSeconds(1));
+
+        // --- CYCLE 5: gpu0 gets telemetry back, user selects gpu0 as primary ---
+        // This forces gpu0 to be primary so gpu1 becomes secondary again.
+        // gpu1 should qualify FRESH (not carry over the 2 failures from previous secondary tenure)
+        var (snapshot5, payload5, tracker5, extrasTracker5, nextTracked5) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1 }, trackedGpuDeviceId: trackedGpuDeviceId, userSelectedGpuInstanceId: gpu0.InstanceId);
+        trackedGpuDeviceId = nextTracked5;
+
+        // gpu0 is primary (user selected), gpu1 is secondary with telemetry
+        // gpu1 should appear as extra (fresh qualification, grace history reset)
+        Assert.Equal(gpu0.InstanceId, GetPrimaryGpuInstanceId(payload5, snapshot5));
+        Assert.True(payload5.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)), "gpu1 should appear as extra after role transition with fresh telemetry");
+        Assert.Contains(gpu1.InstanceId, snapshot5.GpuTrackedExtraInstanceIds);
+    }
+
+    /// <summary>
+    /// End-to-end test verifying the complete service → snapshot → presenter pipeline
+    /// for coexisting readable and grace-retained secondary devices.
+    /// </summary>
+    [Fact]
+    public void EndToEnd_ReadableAndGraceDevices_PresenterShowsBothInCorrectOrder()
+    {
+        var time = new FakeTimeProvider();
+        var tracker = new GpuSelectionTracker(graceCycles: 3, time);
+        var extrasTracker = new GpuExtrasTracker(graceCycles: 3, time);
+
+        // Three GPUs: gpu0 (primary), gpu1 (secondary with telemetry), gpu2 (secondary in grace)
+        var gpu0 = LhmFixtures.NvidiaGpu(readable: true);
+        gpu0 = gpu0 with
+        {
+            DeviceId = "/gpu-nvidia/0",
+            DisplayName = "NVIDIA GeForce RTX 2070 Super",
+            PciDeviceKey = "VEN_10DE&DEV_1E84",
+            InstanceId = @"PCI\VEN_10DE&DEV_1E84&SUBSYS_12341458\4&7AADB68&0&0008",
+        };
+
+        var gpu1 = LhmFixtures.NvidiaGpu(readable: true);
+        gpu1 = gpu1 with
+        {
+            DeviceId = "/gpu-nvidia/1",
+            DisplayName = "NVIDIA GeForce RTX 3070",
+            PciDeviceKey = "VEN_10DE&DEV_2206",
+            InstanceId = @"PCI\VEN_10DE&DEV_2206&SUBSYS_12341458\4&7AADB68&0&0010",
+        };
+
+        var gpu2 = LhmFixtures.NvidiaGpu(readable: true);
+        gpu2 = gpu2 with
+        {
+            DeviceId = "/gpu-nvidia/2",
+            DisplayName = "NVIDIA GeForce RTX 4070",
+            PciDeviceKey = "VEN_10DE&DEV_2786",
+            InstanceId = @"PCI\VEN_10DE&DEV_2786&SUBSYS_12341458\4&7AADB68&0&0020",
+        };
+
+        string? trackedGpuDeviceId = null;
+
+        // --- CYCLE 1: All three have telemetry ---
+        var (snapshot1, payload1, _, _, nextTracked1) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1, gpu2 }, trackedGpuDeviceId: trackedGpuDeviceId);
+        trackedGpuDeviceId = nextTracked1;
+
+        // Both gpu1 and gpu2 should appear as extras
+        Assert.True(payload1.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.True(payload1.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(2)));
+        Assert.Equal(2, snapshot1.GpuTrackedExtraInstanceIds.Count);
+
+        time.Advance(TimeSpan.FromSeconds(1));
+
+        // --- CYCLE 2: gpu1 keeps telemetry, gpu2 loses it (failure 1) ---
+        var gpu2NoTelemetry = gpu2 with { Sensors = new List<LhmSensorDescriptor>() };
+        var (snapshot2, payload2, _, _, nextTracked2) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1, gpu2NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
+        trackedGpuDeviceId = nextTracked2;
+
+        // BOTH should still appear: gpu1 (has telemetry) first, gpu2 (grace) second
+        Assert.True(payload2.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.True(payload2.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(2)));
+        Assert.Equal(2, snapshot2.GpuTrackedExtraInstanceIds.Count);
+
+        // Verify order in presenter: gpu1 should be first extra, gpu2 second
+        var extra1Text = payload2.GetText(WidgetPayloadPresenter.ExtraKey(1));
+        var extra2Text = payload2.GetText(WidgetPayloadPresenter.ExtraKey(2));
+        Assert.Contains("RTX 3070", extra1Text); // gpu1 has telemetry, comes first
+        Assert.Contains("RTX 4070", extra2Text); // gpu2 in grace, comes second
+
+        time.Advance(TimeSpan.FromSeconds(1));
+
+        // --- CYCLE 3: gpu1 keeps telemetry, gpu2 still no telemetry (failure 2) ---
+        var (snapshot3, payload3, _, _, nextTracked3) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1, gpu2NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
+        trackedGpuDeviceId = nextTracked3;
+
+        // BOTH should still appear in correct order
+        Assert.True(payload3.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.True(payload3.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(2)));
+        Assert.Equal(2, snapshot3.GpuTrackedExtraInstanceIds.Count);
+
+        var extra1Text3 = payload3.GetText(WidgetPayloadPresenter.ExtraKey(1));
+        var extra2Text3 = payload3.GetText(WidgetPayloadPresenter.ExtraKey(2));
+        Assert.Contains("RTX 3070", extra1Text3);
+        Assert.Contains("RTX 4070", extra2Text3);
+    }
 
     /// <summary>
     /// Helper to get the primary GPU instance ID from the payload by matching

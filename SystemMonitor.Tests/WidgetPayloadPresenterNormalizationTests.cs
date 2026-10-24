@@ -234,6 +234,194 @@ public sealed class WidgetPayloadPresenterNormalizationTests
         Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.DiskCapacityCompactKey));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Present_CompactCapacity_FailedUsedWithAvailableTotal_DoesNotInventZero(bool isRam)
+    {
+        const double total = 16 * 1024.0 * 1024 * 1024;
+        var snapshot = isRam
+            ? Snapshot(
+                ramUsedBytes: Measurement.Failed("test"),
+                ramTotalBytes: Measurement.AvailableValue(total, "B", "test", SampleTime))
+            : Snapshot(
+                diskUsedBytes: Measurement.Failed("test"),
+                diskTotalBytes: Measurement.AvailableValue(total, "B", "test", SampleTime));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot);
+        var key = isRam
+            ? WidgetPayloadPresenter.RamCapacityCompactKey
+            : WidgetPayloadPresenter.DiskCapacityCompactKey;
+
+        Assert.Equal("16.0 GB total", payload.GetText(key));
+        Assert.DoesNotContain("0 /", payload.GetText(key));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Present_CompactCapacity_UnavailableUsedWithAvailableTotal_ShowsTotalOnly(bool isRam)
+    {
+        const double total = 16 * 1024.0 * 1024 * 1024;
+        var unavailableUsed = new Measurement?[]
+        {
+            Measurement.Failed("test"),
+            Measurement.Unsupported("test"),
+            null,
+        };
+
+        foreach (var used in unavailableUsed)
+        {
+            var payload = PresentCompactCapacity(
+                isRam,
+                used,
+                Measurement.AvailableValue(total, "B", "test", SampleTime));
+
+            AssertCapacityText(isRam, payload, $"{ByteFormatter.FormatBytes(total)} total");
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Present_CompactCapacity_AvailableUsedWithUnavailableTotal_ShowsUsedOnly(bool isRam)
+    {
+        const double usedBytes = 4 * 1024.0 * 1024 * 1024;
+        var unavailableTotals = new Measurement?[]
+        {
+            Measurement.Failed("test"),
+            Measurement.Unsupported("test"),
+            null,
+        };
+
+        foreach (var total in unavailableTotals)
+        {
+            var payload = PresentCompactCapacity(
+                isRam,
+                Measurement.AvailableValue(usedBytes, "B", "test", SampleTime),
+                total);
+
+            AssertCapacityText(isRam, payload, $"{ByteFormatter.FormatBytes(usedBytes)} used");
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Present_CompactCapacity_StaleComponent_ShowsStaleWithoutChangingSnapshot(bool isRam)
+    {
+        var staleUsed = Measurement.Stale(SampleTime.AddMinutes(-5), "test");
+        var freshTotal = Measurement.AvailableValue(16 * 1024.0 * 1024 * 1024, "B", "test", SampleTime);
+        var usedStaleSnapshot = isRam
+            ? Snapshot(ramUsedBytes: staleUsed, ramTotalBytes: freshTotal)
+            : Snapshot(diskUsedBytes: staleUsed, diskTotalBytes: freshTotal);
+        var payload = WidgetPayloadPresenter.Present(usedStaleSnapshot);
+
+        AssertCapacityText(isRam, payload, WidgetPayloadPresenter.StaleMarker);
+        Assert.Same(staleUsed, isRam ? usedStaleSnapshot.RamUsedBytes : usedStaleSnapshot.DiskUsedBytes);
+        Assert.Same(freshTotal, isRam ? usedStaleSnapshot.RamTotalBytes : usedStaleSnapshot.DiskTotalBytes);
+        Assert.Equal(MeasurementStatus.Stale, staleUsed.Status);
+        Assert.Equal(SampleTime.AddMinutes(-5), staleUsed.LastSuccessfulUpdate);
+        Assert.Equal(SampleTime, freshTotal.LastSuccessfulUpdate);
+
+        var staleTotal = Measurement.Stale(SampleTime.AddMinutes(-5), "test");
+        var freshUsed = Measurement.AvailableValue(4 * 1024.0 * 1024 * 1024, "B", "test", SampleTime);
+        var totalStaleSnapshot = isRam
+            ? Snapshot(ramUsedBytes: freshUsed, ramTotalBytes: staleTotal)
+            : Snapshot(diskUsedBytes: freshUsed, diskTotalBytes: staleTotal);
+        payload = WidgetPayloadPresenter.Present(totalStaleSnapshot);
+
+        AssertCapacityText(isRam, payload, WidgetPayloadPresenter.StaleMarker);
+        Assert.Same(freshUsed, isRam ? totalStaleSnapshot.RamUsedBytes : totalStaleSnapshot.DiskUsedBytes);
+        Assert.Same(staleTotal, isRam ? totalStaleSnapshot.RamTotalBytes : totalStaleSnapshot.DiskTotalBytes);
+        Assert.Equal(MeasurementStatus.Stale, staleTotal.Status);
+        Assert.Equal(SampleTime.AddMinutes(-5), staleTotal.LastSuccessfulUpdate);
+        Assert.Equal(SampleTime, freshUsed.LastSuccessfulUpdate);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Present_CompactCapacity_BothComponentsUnavailable_ShowsNotAvailable(bool isRam)
+    {
+        var cases = new (Measurement? Used, Measurement? Total)[]
+        {
+            (Measurement.Failed("test"), Measurement.Unsupported("test")),
+            (Measurement.Unsupported("test"), Measurement.Failed("test")),
+            (null, null),
+        };
+
+        foreach (var (used, total) in cases)
+        {
+            var payload = PresentCompactCapacity(isRam, used, total);
+            AssertCapacityText(isRam, payload, WidgetPayloadPresenter.NotAvailable);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Present_CompactCapacity_MeasuredZeroUsed_RemainsACombinedPair(bool isRam)
+    {
+        var payload = PresentCompactCapacity(
+            isRam,
+            Measurement.AvailableValue(0, "B", "test", SampleTime),
+            Measurement.AvailableValue(16 * 1024.0 * 1024 * 1024, "B", "test", SampleTime));
+
+        AssertCapacityText(isRam, payload, "0 / 16 GB");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Present_CompactCapacity_InvalidAvailableNumbers_ShowNotAvailable(bool isRam)
+    {
+        const double total = 16 * 1024.0 * 1024 * 1024;
+        const double used = 4 * 1024.0 * 1024 * 1024;
+        var invalidPairs = new (double Used, double Total)[]
+        {
+            (double.NaN, total),
+            (double.PositiveInfinity, total),
+            (double.NegativeInfinity, total),
+            (used, double.NaN),
+            (used, double.PositiveInfinity),
+            (used, double.NegativeInfinity),
+            (-1, total),
+            (used, -1),
+            (used, 0),
+            (total + 1, total),
+        };
+
+        foreach (var (invalidUsed, invalidTotal) in invalidPairs)
+        {
+            var payload = PresentCompactCapacity(
+                isRam,
+                Measurement.AvailableValue(invalidUsed, "B", "test", SampleTime),
+                Measurement.AvailableValue(invalidTotal, "B", "test", SampleTime));
+
+            AssertCapacityText(isRam, payload, WidgetPayloadPresenter.NotAvailable);
+        }
+
+        var nullAvailableValue = PresentCompactCapacity(
+            isRam,
+            Measurement.AvailableValue(null, "B", "test", SampleTime),
+            Measurement.AvailableValue(total, "B", "test", SampleTime));
+        AssertCapacityText(isRam, nullAvailableValue, WidgetPayloadPresenter.NotAvailable);
+    }
+
+    private static WidgetPayload PresentCompactCapacity(bool isRam, Measurement? used, Measurement? total) =>
+        WidgetPayloadPresenter.Present(isRam
+            ? Snapshot(ramUsedBytes: used, ramTotalBytes: total)
+            : Snapshot(diskUsedBytes: used, diskTotalBytes: total));
+
+    private static void AssertCapacityText(bool isRam, WidgetPayload payload, string expected)
+    {
+        var key = isRam
+            ? WidgetPayloadPresenter.RamCapacityCompactKey
+            : WidgetPayloadPresenter.DiskCapacityCompactKey;
+        Assert.Equal(expected, payload.GetText(key));
+    }
+
     [Fact]
     public void Present_GpuMemoryCapacityCompact_NotAvailableWhenMissing()
     {

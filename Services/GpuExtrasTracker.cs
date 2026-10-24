@@ -107,9 +107,6 @@ namespace System_Monitor.Services
         // Per-instance-id state for each tracked secondary GPU.
         private readonly Dictionary<string, ExtraTrackingState> _tracked = new(StringComparer.OrdinalIgnoreCase);
 
-        // The instance id of the primary GPU from the last cycle (to exclude it from extras).
-        private string? _primaryInstanceId;
-
         /// <summary>
         /// Creates a new tracker with the default grace period.
         /// </summary>
@@ -143,11 +140,14 @@ namespace System_Monitor.Services
             /// <summary>Number of consecutive cycles without usable displayed telemetry.</summary>
             public int ConsecutiveFailures { get; set; }
 
-            /// <summary>Whether the device has ever qualified (had usable displayed telemetry).</summary>
+            /// <summary>Whether the device has ever qualified (had usable displayed telemetry) in its CURRENT secondary tenure.</summary>
             public bool HasEverQualified { get; set; }
 
             /// <summary>Last time this device had usable displayed telemetry.</summary>
             public DateTimeOffset? LastQualifiedAt { get; set; }
+
+            /// <summary>Whether this device was the primary GPU in the previous cycle.</summary>
+            public bool WasPrimaryPreviousCycle { get; set; }
         }
 
         /// <summary>
@@ -192,9 +192,6 @@ namespace System_Monitor.Services
                 .Where(g => g is not null)
                 .ToList();
 
-            // Track the primary instance id for exclusion.
-            _primaryInstanceId = primaryInstanceId;
-
             // Remove tracked devices that are no longer present.
             var currentInstanceIds = devices
                 .Select(g => g.InstanceId)
@@ -210,11 +207,33 @@ namespace System_Monitor.Services
                 _tracked.Remove(key);
             }
 
+            // Detect role transitions: devices that were primary in previous cycle
+            // and are now secondary should have their state reset.
+            // We do this by checking WasPrimaryPreviousCycle flag.
+            foreach (var kvp in _tracked)
+            {
+                if (kvp.Value.WasPrimaryPreviousCycle &&
+                    !string.Equals(kvp.Key, primaryInstanceId, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Device was primary last cycle, now secondary -> reset state for fresh tenure
+                    kvp.Value.HasEverQualified = false;
+                    kvp.Value.ConsecutiveFailures = 0;
+                    kvp.Value.LastQualifiedAt = null;
+                }
+            }
+
+            // Track the current primary instance id for next cycle's role transition detection.
+            // Mark all tracked devices with whether they are the primary THIS cycle.
+            foreach (var kvp in _tracked)
+            {
+                kvp.Value.WasPrimaryPreviousCycle = string.Equals(kvp.Key, primaryInstanceId, StringComparison.OrdinalIgnoreCase);
+            }
+
             // Evaluate each device (except the primary) for eligibility.
             foreach (var device in devices)
             {
                 // Skip the primary GPU.
-                if (string.Equals(device.InstanceId, _primaryInstanceId, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(device.InstanceId, primaryInstanceId, StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 var instanceId = device.InstanceId;
@@ -231,6 +250,7 @@ namespace System_Monitor.Services
                         ConsecutiveFailures = 0,
                         HasEverQualified = false,
                         LastQualifiedAt = null,
+                        WasPrimaryPreviousCycle = false,
                     };
                     _tracked[instanceId] = state;
                 }
@@ -247,6 +267,7 @@ namespace System_Monitor.Services
                             ConsecutiveFailures = 0,
                             HasEverQualified = false,
                             LastQualifiedAt = null,
+                            WasPrimaryPreviousCycle = false,
                         };
                         _tracked[instanceId] = state;
                     }
@@ -279,15 +300,16 @@ namespace System_Monitor.Services
             var eligibleInstanceIds = _tracked
                 .Where(kvp => kvp.Value.HasEverQualified
                            && kvp.Value.ConsecutiveFailures <= _graceCycles
-                           && !string.Equals(kvp.Key, _primaryInstanceId, StringComparison.OrdinalIgnoreCase))
+                           && !string.Equals(kvp.Key, primaryInstanceId, StringComparison.OrdinalIgnoreCase))
                 .Select(kvp => kvp.Key)
                 .ToList();
 
             // Order them by the same presentation policy (telemetry-aware, then integration, then instance id).
+            // Include BOTH devices with current telemetry AND devices in grace period (without current telemetry).
             var orderedEligible = OrderEligibleForPresentation(devices, eligibleInstanceIds, snapshot,
                 gpuLoadPercent, gpuLoadDeviceId, gpuTemperatureC, gpuTemperatureDeviceId);
 
-            return new UpdateResult(orderedEligible, _primaryInstanceId);
+            return new UpdateResult(orderedEligible, primaryInstanceId);
         }
 
         /// <summary>
@@ -373,12 +395,18 @@ namespace System_Monitor.Services
                     withoutTelemetry.Add(device);
             }
 
-            var ordered = withTelemetry.Count > 0 ? withTelemetry : withoutTelemetry;
-
-            return ordered
+            // Return devices with telemetry first (ordered by policy), then
+            // devices without telemetry (also ordered by policy). This ensures
+            // devices in grace period without current telemetry are still
+            // included for presentation with N/A values.
+            return withTelemetry
                 .OrderBy(g => IntegrationRank(g.GpuIntegration))
                 .ThenBy(g => g.InstanceId ?? string.Empty, StringComparer.Ordinal)
                 .ThenBy(g => g.DeviceId, StringComparer.Ordinal)
+                .Concat(withoutTelemetry
+                    .OrderBy(g => IntegrationRank(g.GpuIntegration))
+                    .ThenBy(g => g.InstanceId ?? string.Empty, StringComparer.Ordinal)
+                    .ThenBy(g => g.DeviceId, StringComparer.Ordinal))
                 .Select(g => g.InstanceId!)
                 .ToList();
         }

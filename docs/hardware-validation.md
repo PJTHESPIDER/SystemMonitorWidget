@@ -1016,6 +1016,31 @@ not prove identity of all package contents.
 
 ### Acceptance matrix
 
+#### Compact RAM/disk capacity presentation
+
+The system RAM and disk compact fields are status-aware at the presenter
+boundary. Two valid `Available` values produce the existing compact pair;
+measured zero remains a valid used value. With one valid `Available` side
+and the other absent, `Failed`, or `Unsupported`, the payload explicitly
+labels the surviving value as `used` or `total`. If either status is
+explicitly `Stale`, the field is `stale`. If neither side is usable, or an
+`Available` value is null, non-finite, negative, zero-capacity, or an
+incoherent pair, the field is `N/A`.
+
+The presenter reads the immutable measurements without changing values,
+statuses, or `LastSuccessfulUpdate`. This compact helper honors explicit
+`Stale` status; it does not add a new age-from-timestamp rule for RAM/disk.
+GPU memory remains on its separately attributed and compatibility-checked
+presentation path, including the existing used-only fallback and no
+total-only display.
+
+Presenter regression methods in
+`SystemMonitor.Tests/WidgetPayloadPresenterNormalizationTests.cs` cover both
+`ramCapacityCompact` and `diskCapacityCompact`: failed-used reproduction,
+unavailable-used total-only, unavailable-total used-only, stale on either
+side with snapshot preservation, both sides unavailable, measured zero,
+and invalid available numbers.
+
 | Area | Automated evidence | Live/historical/provisional evidence | Current status / accepted limitation |
 |---|---|---|---|
 | CPU temperature | Sensor selection, diagnostics, merge/retained-value and presentation cases are in the test suite | Screenshots show N/A; prior standard-user diagnostics found recognized Intel sensors unreadable | Observed standard-user limitation; elevation comparison is unperformed; access/driver cause is not confirmed |

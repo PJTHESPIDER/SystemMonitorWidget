@@ -677,4 +677,210 @@ public class GpuExtrasTrackerTests
 
         Assert.Empty(result.EligibleInstanceIds);
     }
+
+    /// <summary>
+    /// Verifies that when a GPU transitions from secondary -> primary -> secondary,
+    /// its grace failure history is reset. The role transition should not carry
+    /// over consecutive failures from the previous secondary tenure.
+    /// </summary>
+    [Fact]
+    public void Tracker_SecondaryToPrimaryToSecondary_ResetsHistory()
+    {
+        var tracker = new GpuExtrasTracker();
+        var devices = new[]
+        {
+            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
+            Gpu("gpu1", "pci-1", GpuIntegration.Discrete),
+        };
+
+        // Cycle 1: gpu0 primary, gpu1 secondary with telemetry -> gpu1 qualifies
+        var snapshot1 = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu0", "LoadPercent", 10.0), Read("gpu1", "LoadPercent", 5.0) });
+        var r1 = tracker.Update(devices, "pci-0", snapshot1, null, null, null, null);
+        Assert.Contains("pci-1", r1.EligibleInstanceIds);
+
+        // Cycle 2: gpu1 loses telemetry (failure 1 as secondary)
+        var snapshot2 = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu0", "LoadPercent", 10.0) });
+        var r2 = tracker.Update(devices, "pci-0", snapshot2, null, null, null, null);
+        Assert.Contains("pci-1", r2.EligibleInstanceIds); // Still retained (failure 1)
+        Assert.Equal(1, tracker.GetTrackingState()["pci-1"].ConsecutiveFailures);
+
+        // Cycle 3: gpu1 loses telemetry (failure 2 as secondary)
+        var snapshot3 = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu0", "LoadPercent", 10.0) });
+        var r3 = tracker.Update(devices, "pci-0", snapshot3, null, null, null, null);
+        Assert.Contains("pci-1", r3.EligibleInstanceIds); // Still retained (failure 2)
+        Assert.Equal(2, tracker.GetTrackingState()["pci-1"].ConsecutiveFailures);
+
+        // Cycle 4: gpu0 loses telemetry, gpu1 becomes primary
+        // gpu1 is now primary, so it's excluded from extras
+        var snapshot4 = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu1", "LoadPercent", 5.0) });
+        var r4 = tracker.Update(devices, "pci-1", snapshot4, null, null, null, null);
+        // gpu1 is primary, so no extras
+        Assert.Empty(r4.EligibleInstanceIds);
+        // But gpu1's tracking state should still exist with 2 failures
+
+        // Cycle 5: gpu0 gets telemetry back, gpu1 becomes secondary AGAIN
+        // gpu1 should qualify FRESH (not carry over the 2 failures from when it was secondary before)
+        var snapshot5 = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu0", "LoadPercent", 8.0), Read("gpu1", "LoadPercent", 5.0) });
+        var r5 = tracker.Update(devices, "pci-0", snapshot5, null, null, null, null);
+
+        // BUG: The tracker currently carries over the failure count!
+        // Expected: gpu1 should appear as extra (fresh qualification)
+        // Actual (buggy): gpu1 might not appear because it has 2 prior failures
+        var stateAfterSecondary = tracker.GetTrackingState()["pci-1"];
+        System.Console.WriteLine($"State after cycle 5: HasEverQualified={stateAfterSecondary.HasEverQualified}, ConsecutiveFailures={stateAfterSecondary.ConsecutiveFailures}");
+        Assert.Contains("pci-1", r5.EligibleInstanceIds); // Should qualify fresh
+        // The key assertion: failure count should be RESET to 0, not remain at 2
+        Assert.Equal(0, stateAfterSecondary.ConsecutiveFailures);
+    }
+
+    /// <summary>
+    /// Verifies that when a GPU transitions from secondary -> primary -> secondary
+    /// WITHOUT telemetry in the new secondary role, it does NOT carry over the
+    /// failure count from the previous secondary tenure. A device becoming secondary
+    /// should start fresh - it only accumulates failures if it HAS qualified as
+    /// secondary in the current tenure.
+    /// </summary>
+    [Fact]
+    public void Tracker_SecondaryToPrimaryToSecondary_NoTelemetry_DoesNotCarryOverFailures()
+    {
+        var tracker = new GpuExtrasTracker();
+        var devices = new[]
+        {
+            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
+            Gpu("gpu1", "pci-1", GpuIntegration.Discrete),
+        };
+
+        // Cycle 1: gpu0 primary, gpu1 secondary with telemetry -> gpu1 qualifies
+        var snapshot1 = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu0", "LoadPercent", 10.0), Read("gpu1", "LoadPercent", 5.0) });
+        tracker.Update(devices, "pci-0", snapshot1, null, null, null, null);
+
+        // Cycle 2: gpu1 loses telemetry (failure 1 as secondary)
+        var snapshot2 = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu0", "LoadPercent", 10.0) });
+        tracker.Update(devices, "pci-0", snapshot2, null, null, null, null);
+        Assert.Equal(1, tracker.GetTrackingState()["pci-1"].ConsecutiveFailures);
+
+        // Cycle 3: gpu1 loses telemetry (failure 2 as secondary)
+        var snapshot3 = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu0", "LoadPercent", 10.0) });
+        tracker.Update(devices, "pci-0", snapshot3, null, null, null, null);
+        Assert.Equal(2, tracker.GetTrackingState()["pci-1"].ConsecutiveFailures);
+
+        // Cycle 4: gpu0 loses telemetry, gpu1 becomes primary
+        var snapshot4 = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu1", "LoadPercent", 5.0) });
+        tracker.Update(devices, "pci-1", snapshot4, null, null, null, null);
+        // gpu1 is primary, so no extras
+        var stateAfterPrimary = tracker.GetTrackingState()["pci-1"];
+        Assert.Equal(2, stateAfterPrimary.ConsecutiveFailures);
+        Assert.True(stateAfterPrimary.HasEverQualified);
+
+        // Cycle 5: gpu0 gets telemetry back, gpu1 becomes secondary AGAIN
+        // BUT gpu1 has NO telemetry this cycle
+        var snapshot5 = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu0", "LoadPercent", 8.0) }); // Only gpu0 has telemetry
+        var r5 = tracker.Update(devices, "pci-0", snapshot5, null, null, null, null);
+
+        // EXPECTED BEHAVIOR: gpu1 should NOT appear as extra because:
+        // 1. It never qualified as secondary in this new tenure (no telemetry in cycle 5)
+        // 2. The 2 failures from the PREVIOUS secondary tenure should NOT carry over
+        // 3. Since HasEverQualified is true (from previous tenure) but failure count
+        //    should be reset, the behavior depends on the exact rule.
+        //
+        // According to the grace policy: "A device transitioning from primary to
+        // secondary starts with a fresh eligibility history (it must qualify on its
+        // own displayed telemetry)."
+        // This means HasEverQualified should be RESET to false when transitioning
+        // from primary to secondary.
+        var stateAfterSecondary = tracker.GetTrackingState()["pci-1"];
+        System.Console.WriteLine($"State after cycle 5: HasEverQualified={stateAfterSecondary.HasEverQualified}, ConsecutiveFailures={stateAfterSecondary.ConsecutiveFailures}");
+
+        // Should not appear as extra (no telemetry in new tenure)
+        Assert.DoesNotContain("pci-1", r5.EligibleInstanceIds);
+        // HasEverQualified should be false (fresh start)
+        Assert.False(stateAfterSecondary.HasEverQualified);
+        // ConsecutiveFailures should be 0
+        Assert.Equal(0, stateAfterSecondary.ConsecutiveFailures);
+    }
+
+    /// <summary>
+    /// Verifies that when some secondary GPUs have current telemetry and others
+    /// are in grace period (no current telemetry), ALL eligible devices are
+    /// returned in the correct order: telemetry devices first, then grace devices.
+    /// </summary>
+    [Fact]
+    public void Tracker_ReadableAndGraceDevices_CoexistAndAreOrderedCorrectly()
+    {
+        var tracker = new GpuExtrasTracker();
+        var devices = new[]
+        {
+            Gpu("gpu0", "pci-0", GpuIntegration.Discrete, "Primary GPU"),
+            Gpu("gpu1", "pci-1", GpuIntegration.Discrete, "Secondary With Telemetry"),
+            Gpu("gpu2", "pci-2", GpuIntegration.Discrete, "Secondary In Grace"),
+        };
+
+        // Cycle 1: All three have telemetry, gpu0 is primary
+        var snapshot1 = Snapshot(
+            gpus: devices,
+            readings: new[]
+            {
+                Read("gpu0", "LoadPercent", 10.0),
+                Read("gpu1", "LoadPercent", 5.0),
+                Read("gpu2", "LoadPercent", 3.0)
+            });
+        var r1 = tracker.Update(devices, "pci-0", snapshot1, null, null, null, null);
+        Assert.Equal(2, r1.EligibleInstanceIds.Count);
+        Assert.Contains("pci-1", r1.EligibleInstanceIds);
+        Assert.Contains("pci-2", r1.EligibleInstanceIds);
+
+        // Cycle 2: gpu1 keeps telemetry, gpu2 loses it (failure 1)
+        var snapshot2 = Snapshot(
+            gpus: devices,
+            readings: new[]
+            {
+                Read("gpu0", "LoadPercent", 10.0),
+                Read("gpu1", "LoadPercent", 5.0)
+            });
+        var r2 = tracker.Update(devices, "pci-0", snapshot2, null, null, null, null);
+
+        // BOTH should appear: gpu1 (has telemetry) first, gpu2 (grace) second
+        Assert.Equal(2, r2.EligibleInstanceIds.Count);
+        Assert.Contains("pci-1", r2.EligibleInstanceIds);
+        Assert.Contains("pci-2", r2.EligibleInstanceIds);
+
+        // gpu1 should come FIRST (has current telemetry)
+        Assert.Equal("pci-1", r2.EligibleInstanceIds[0]);
+        Assert.Equal("pci-2", r2.EligibleInstanceIds[1]);
+
+        // Cycle 3: gpu1 keeps telemetry, gpu2 still no telemetry (failure 2)
+        var snapshot3 = Snapshot(
+            gpus: devices,
+            readings: new[]
+            {
+                Read("gpu0", "LoadPercent", 10.0),
+                Read("gpu1", "LoadPercent", 5.0)
+            });
+        var r3 = tracker.Update(devices, "pci-0", snapshot3, null, null, null, null);
+
+        // BOTH should still appear
+        Assert.Equal(2, r3.EligibleInstanceIds.Count);
+        Assert.Equal("pci-1", r3.EligibleInstanceIds[0]); // gpu1 has telemetry, comes first
+        Assert.Equal("pci-2", r3.EligibleInstanceIds[1]); // gpu2 in grace, comes second
+    }
 }

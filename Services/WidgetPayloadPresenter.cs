@@ -340,9 +340,9 @@ namespace System_Monitor.Services
             text[RamCombinedKey] = $"{text[RamUsedKey]} / {text[RamTotalKey]}";
             text[RamPercentKey] = FormatPercent(snapshot.RamPercent);
             text[RamCompactKey] = $"{text[RamUsedKey]} ({text[RamPercentKey]})";
-            text[RamCapacityCompactKey] = ByteFormatter.FormatCapacityCompact(
-                GetValueOrDefault(snapshot.RamUsedBytes),
-                GetValueOrDefault(snapshot.RamTotalBytes));
+            text[RamCapacityCompactKey] = FormatSystemCapacityCompact(
+                snapshot.RamUsedBytes,
+                snapshot.RamTotalBytes);
 
             // --- Disk --------------------------------------------------------
             text[DiskKey] = FormatUsage(snapshot.DiskUsedBytes, snapshot.DiskTotalBytes, snapshot.DiskPercent);
@@ -351,9 +351,9 @@ namespace System_Monitor.Services
             text[DiskCombinedKey] = $"{text[DiskUsedKey]} / {text[DiskTotalKey]}";
             text[DiskPercentKey] = FormatPercent(snapshot.DiskPercent);
             text[DiskCompactKey] = $"{text[DiskUsedKey]} ({text[DiskPercentKey]})";
-            text[DiskCapacityCompactKey] = ByteFormatter.FormatCapacityCompact(
-                GetValueOrDefault(snapshot.DiskUsedBytes),
-                GetValueOrDefault(snapshot.DiskTotalBytes));
+            text[DiskCapacityCompactKey] = FormatSystemCapacityCompact(
+                snapshot.DiskUsedBytes,
+                snapshot.DiskTotalBytes);
 
             // --- Network -----------------------------------------------------
             text[NetDownKey] = FormatNetworkSpeed(snapshot.NetworkDownloadBytesPerSec);
@@ -438,23 +438,53 @@ namespace System_Monitor.Services
             return new WidgetPayload(text, flags);
         }
 
-        /// <summary>
-        /// Gets the double value of a measurement or 0 if not available.
-        /// </summary>
-        private static double GetValueOrDefault(Measurement? measurement)
-        {
-            if (measurement is not null
-                && measurement.Status == MeasurementStatus.Available
-                && measurement.Value.HasValue)
-            {
-                return measurement.Value.Value;
-            }
-            return 0;
-        }
-
         // ------------------------------------------------------------------
         // Formatting helpers
         // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Formats RAM or disk capacity without discarding measurement status.
+        /// Numeric formatting remains in <see cref="ByteFormatter"/>; this
+        /// method decides which measurements are eligible to be combined.
+        /// </summary>
+        private static string FormatSystemCapacityCompact(Measurement? used, Measurement? total)
+        {
+            if (used?.Status == MeasurementStatus.Stale || total?.Status == MeasurementStatus.Stale)
+                return StaleMarker;
+
+            var usedIsAvailable = used?.Status == MeasurementStatus.Available;
+            var totalIsAvailable = total?.Status == MeasurementStatus.Available;
+
+            if (usedIsAvailable && !IsValidCapacityValue(used, allowZero: true))
+                return NotAvailable;
+
+            if (totalIsAvailable && !IsValidCapacityValue(total, allowZero: false))
+                return NotAvailable;
+
+            if (usedIsAvailable && totalIsAvailable)
+            {
+                var usedValue = used!.Value!.Value;
+                var totalValue = total!.Value!.Value;
+                if (usedValue > totalValue)
+                    return NotAvailable;
+
+                return ByteFormatter.FormatCapacityCompact(usedValue, totalValue);
+            }
+
+            if (usedIsAvailable)
+                return $"{ByteFormatter.FormatBytes(used!.Value!.Value)} used";
+
+            if (totalIsAvailable)
+                return $"{ByteFormatter.FormatBytes(total!.Value!.Value)} total";
+
+            return NotAvailable;
+        }
+
+        private static bool IsValidCapacityValue(Measurement? measurement, bool allowZero) =>
+            measurement?.Value is double value
+            && double.IsFinite(value)
+            && value >= 0
+            && (allowZero || value > 0);
 
         /// <summary>
         /// Describes the GPUs other than the presented one, in the
