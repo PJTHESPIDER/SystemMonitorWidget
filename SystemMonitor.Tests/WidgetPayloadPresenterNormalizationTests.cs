@@ -171,7 +171,8 @@ public sealed class WidgetPayloadPresenterNormalizationTests
         var payload = WidgetPayloadPresenter.Present(snapshot);
 
         // total = 16 GB (>= 10, < 100): 1 decimal, trimmed
-        Assert.Equal("8 / 16 GB", payload.GetText(WidgetPayloadPresenter.RamCapacityCompactKey));
+        // 8GB / 16GB = 50.0%
+        Assert.Equal("8 / 16 GB (50.0%)", payload.GetText(WidgetPayloadPresenter.RamCapacityCompactKey));
     }
 
     [Fact]
@@ -187,7 +188,8 @@ public sealed class WidgetPayloadPresenterNormalizationTests
         // total = 465.66 GB (>= 100): whole units
         // used = 93.13 -> 93
         // total = 465.66 -> 466
-        Assert.Equal("93 / 466 GB", payload.GetText(WidgetPayloadPresenter.DiskCapacityCompactKey));
+        // 100B / 500B = 20.0%
+        Assert.Equal("93 / 466 GB (20.0%)", payload.GetText(WidgetPayloadPresenter.DiskCapacityCompactKey));
     }
 
     [Fact]
@@ -207,7 +209,8 @@ public sealed class WidgetPayloadPresenterNormalizationTests
         // 4GB / 10GB = 3.725 GB / 9.313 GB
         // total = 9.313 GB (< 10): 2 decimals -> "9.31"
         // used = 3.725 -> "3.73"
-        Assert.Equal("3.73 / 9.31 GB", payload.GetText(WidgetPayloadPresenter.GpuMemoryCapacityCompactKey));
+        // 4B / 10B = 40.0%
+        Assert.Equal("3.73 / 9.31 GB (40.0%)", payload.GetText(WidgetPayloadPresenter.GpuMemoryCapacityCompactKey));
     }
 
     [Fact]
@@ -368,7 +371,7 @@ public sealed class WidgetPayloadPresenterNormalizationTests
             Measurement.AvailableValue(0, "B", "test", SampleTime),
             Measurement.AvailableValue(16 * 1024.0 * 1024 * 1024, "B", "test", SampleTime));
 
-        AssertCapacityText(isRam, payload, "0 / 16 GB");
+        AssertCapacityText(isRam, payload, "0 / 16 GB (0.0%)");
     }
 
     [Theory]
@@ -716,7 +719,8 @@ public sealed class WidgetPayloadPresenterNormalizationTests
         var payload = WidgetPayloadPresenter.Present(snapshot);
 
         // Same generic family -> combined
-        Assert.Equal("3.73 / 9.31 GB", payload.GetText(WidgetPayloadPresenter.GpuMemoryCapacityCompactKey));
+        // 4B / 10B = 40.0%
+        Assert.Equal("3.73 / 9.31 GB (40.0%)", payload.GetText(WidgetPayloadPresenter.GpuMemoryCapacityCompactKey));
     }
 
     [Fact]
@@ -735,7 +739,8 @@ public sealed class WidgetPayloadPresenterNormalizationTests
         var payload = WidgetPayloadPresenter.Present(snapshot);
 
         // Both dedicated -> combined
-        Assert.Equal("3.73 / 9.31 GB", payload.GetText(WidgetPayloadPresenter.GpuMemoryCapacityCompactKey));
+        // 4B / 10B = 40.0%
+        Assert.Equal("3.73 / 9.31 GB (40.0%)", payload.GetText(WidgetPayloadPresenter.GpuMemoryCapacityCompactKey));
     }
 
     [Fact]

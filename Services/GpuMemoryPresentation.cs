@@ -273,12 +273,12 @@ namespace System_Monitor.Services
                 // If either is stale, the whole combined display is stale
                 var display = (usedDisplay == "stale" || totalDisplay == "stale")
                     ? "stale"
-                    : $"{usedDisplay} / {totalDisplay} ({pct:F1}%)";
+                    : $"{usedDisplay} / {totalDisplay} ({ByteFormatter.FormatPercent(pct)})";
 
                 // Compact display - stale if either measurement is stale
                 var compactDisplay = (usedDisplay == "stale" || totalDisplay == "stale")
                     ? "stale"
-                    : ByteFormatter.FormatCapacityCompact(usedValue, totalValue);
+                    : $"{ByteFormatter.FormatCapacityCompact(usedValue, totalValue)} ({ByteFormatter.FormatPercent(pct)})";
 
                 var label = GpuMemoryCompatibilityPolicy.CombinedLabelOf(used, total);
 

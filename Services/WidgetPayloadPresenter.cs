@@ -478,7 +478,9 @@ namespace System_Monitor.Services
                 if (usedValue > totalValue)
                     return NotAvailable;
 
-                return ByteFormatter.FormatCapacityCompact(usedValue, totalValue);
+                var compact = ByteFormatter.FormatCapacityCompact(usedValue, totalValue);
+                var percent = usedValue / totalValue * 100.0;
+                return $"{compact} ({ByteFormatter.FormatPercent(percent)})";
             }
 
             if (usedIsAvailable)
