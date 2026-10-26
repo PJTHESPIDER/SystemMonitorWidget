@@ -915,6 +915,8 @@ namespace System_Monitor.Services
         private async Task RunCycleAsync(Generation generation, CancellationToken lifetimeToken)
         {
             var token = generation.Cts.Token;
+            var cycleId = Guid.NewGuid().ToString("N");
+            var transactional = _collector as ITransactionalMetricsCollector;
 
             // 1. Collect readings synchronously into one immutable snapshot.
             //    Collectors are synchronous WMI/native calls and cannot be
@@ -923,11 +925,12 @@ namespace System_Monitor.Services
             MetricsSnapshot snapshot;
             try
             {
-                snapshot = _collector.Collect();
+                snapshot = transactional is null ? _collector.Collect() : transactional.Collect(cycleId);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 // Cancellation is expected control flow, not a failure.
+                transactional?.Reject(cycleId);
                 return;
             }
             catch (Exception ex)
@@ -939,18 +942,27 @@ namespace System_Monitor.Services
                     "collect",
                     "failed",
                     detail: DiagnosticDetail.Describe(ex));
+                transactional?.Reject(cycleId);
                 return;
             }
 
             // A snapshot collected under a cancelled or superseded
             // generation is stale and must not be published as current data.
             if (token.IsCancellationRequested || lifetimeToken.IsCancellationRequested)
+            {
+                transactional?.Reject(cycleId);
                 return;
+            }
 
             lock (_stateLock)
             {
                 if (_disposed || !ReferenceEquals(_current, generation))
+                {
+                    transactional?.Reject(cycleId);
                     return;
+                }
+                // Acceptance is atomic with generation validity; publication is downstream.
+                transactional?.Accept(cycleId);
             }
 
             // 2. Build one payload from the snapshot.

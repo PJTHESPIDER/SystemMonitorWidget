@@ -81,6 +81,18 @@ namespace System_Monitor.Services
     /// </summary>
     public sealed class GpuSelectionTracker
     {
+        public sealed record State(string? TrackedInstanceId, int ConsecutiveFailures, string? TrackedDeviceId, DateTimeOffset LastUpdate);
+
+        public State CaptureState() => new(_trackedInstanceId, _consecutiveFailures, _trackedDeviceId, _lastUpdate);
+
+        public void RestoreState(State state)
+        {
+            _trackedInstanceId = state.TrackedInstanceId;
+            _consecutiveFailures = state.ConsecutiveFailures;
+            _trackedDeviceId = state.TrackedDeviceId;
+            _lastUpdate = state.LastUpdate;
+        }
+
         /// <summary>
         /// How many consecutive cycles without usable telemetry the tracker
         /// retains the automatically selected GPU before permitting a fallback.

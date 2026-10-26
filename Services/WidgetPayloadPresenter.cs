@@ -296,9 +296,10 @@ namespace System_Monitor.Services
                 gpuVramUsed.DeviceId,
                 gpuVramTotal.Measurement,
                 gpuVramTotal.DeviceId,
-                gpu?.DeviceId);
+                gpu?.DeviceId,
+                now);
 
-            text[GpuVramUsedKey] = FormatBytesValue(gpuVramUsed.Measurement);
+            text[GpuVramUsedKey] = FormatAtTime(gpuVramUsed.Measurement, ByteFormatter.FormatBytes, now);
             text[GpuVramKey] = gpuMemory.Display;
             text[GpuVramLabelKey] = GpuMemoryPresentation.LabelText(gpuMemory.Label);
             text[GpuVramLabelCompactKey] = GpuMemoryPresentation.CompactLabelText(gpuMemory.Label);
@@ -322,7 +323,7 @@ namespace System_Monitor.Services
             };
 
             // --- GPU: additional devices -----------------------------------
-            var extras = BuildExtras(snapshot, gpu, maxExtraDevices);
+            var extras = BuildExtras(snapshot, gpu, maxExtraDevices, now);
             for (var i = 0; i < MaxExtraDevices; i++)
             {
                 var present = i < extras.Count;
@@ -342,7 +343,8 @@ namespace System_Monitor.Services
             text[RamCompactKey] = $"{text[RamUsedKey]} ({text[RamPercentKey]})";
             text[RamCapacityCompactKey] = FormatSystemCapacityCompact(
                 snapshot.RamUsedBytes,
-                snapshot.RamTotalBytes);
+                snapshot.RamTotalBytes,
+                now);
 
             // --- Disk --------------------------------------------------------
             text[DiskKey] = FormatUsage(snapshot.DiskUsedBytes, snapshot.DiskTotalBytes, snapshot.DiskPercent);
@@ -353,11 +355,12 @@ namespace System_Monitor.Services
             text[DiskCompactKey] = $"{text[DiskUsedKey]} ({text[DiskPercentKey]})";
             text[DiskCapacityCompactKey] = FormatSystemCapacityCompact(
                 snapshot.DiskUsedBytes,
-                snapshot.DiskTotalBytes);
+                snapshot.DiskTotalBytes,
+                now);
 
             // --- Network -----------------------------------------------------
-            text[NetDownKey] = FormatNetworkSpeed(snapshot.NetworkDownloadBytesPerSec);
-            text[NetUpKey] = FormatNetworkSpeed(snapshot.NetworkUploadBytesPerSec);
+            text[NetDownKey] = FormatNetworkSpeed(snapshot.NetworkDownloadBytesPerSec, now);
+            text[NetUpKey] = FormatNetworkSpeed(snapshot.NetworkUploadBytesPerSec, now);
 
             // --- Temperatures ------------------------------------------------
             // The ACPI thermal-zone average comes from an unidentified
@@ -447,8 +450,15 @@ namespace System_Monitor.Services
         /// Numeric formatting remains in <see cref="ByteFormatter"/>; this
         /// method decides which measurements are eligible to be combined.
         /// </summary>
-        private static string FormatSystemCapacityCompact(Measurement? used, Measurement? total)
+        private static string FormatSystemCapacityCompact(Measurement? used, Measurement? total, DateTimeOffset? now = null)
         {
+            // Apply publication-time aging
+            if (now.HasValue)
+            {
+                used = MaybeStaleAt(used, now.Value);
+                total = MaybeStaleAt(total, now.Value);
+            }
+
             if (used?.Status == MeasurementStatus.Stale || total?.Status == MeasurementStatus.Stale)
                 return StaleMarker;
 
@@ -499,7 +509,8 @@ namespace System_Monitor.Services
         private static List<string> BuildExtras(
             MetricsSnapshot snapshot,
             HardwareDevice? presented,
-            int max)
+            int max,
+            DateTimeOffset? now = null)
         {
             var extras = new List<string>();
             if (max <= 0)
@@ -537,7 +548,7 @@ namespace System_Monitor.Services
                 var load = DeviceMetric(snapshot, device.DeviceId, LhmSensorSelection.GpuLoadMetric);
                 var temp = DeviceMetric(snapshot, device.DeviceId, LhmSensorSelection.GpuTemperatureMetric);
 
-                extras.Add(FormatExtraDevice(device, load, temp));
+                extras.Add(FormatExtraDevice(device, load, temp, now));
             }
 
             return extras;
@@ -555,10 +566,11 @@ namespace System_Monitor.Services
         private static string FormatExtraDevice(
             HardwareDevice device,
             Measurement? load,
-            Measurement? temp)
+            Measurement? temp,
+            DateTimeOffset? now = null)
         {
             var label = ComposeDeviceLabel(device, maxLength: 40);
-            return $"{label} — {FormatPercent(load)}, {FormatTemperature(temp)}";
+            return $"{label} — {FormatAtTime(load, ByteFormatter.FormatPercent, now ?? DateTimeOffset.MinValue)}, {FormatAtTime(temp, ByteFormatter.FormatTemperature, now ?? DateTimeOffset.MinValue)}";
         }
 
         /// <summary>
@@ -978,6 +990,23 @@ namespace System_Monitor.Services
         }
 
         /// <summary>
+        /// Returns a stale copy of the measurement if it is Available but older
+        /// than the stale threshold relative to <paramref name="now"/>.
+        /// Otherwise returns the original measurement.
+        /// </summary>
+        private static Measurement? MaybeStaleAt(Measurement? measurement, DateTimeOffset now)
+        {
+            if (measurement?.Status == MeasurementStatus.Available
+                && measurement.LastSuccessfulUpdate.HasValue
+                && now - measurement.LastSuccessfulUpdate.Value > StaleThreshold)
+            {
+                // Create a stale copy preserving the value and source
+                return Measurement.Stale(measurement.LastSuccessfulUpdate, measurement.Source);
+            }
+            return measurement;
+        }
+
+        /// <summary>
         /// Formats a percentage. A measurement that is not available, has
         /// failed, or is stale never becomes "0.0%".
         /// </summary>
@@ -1040,8 +1069,8 @@ namespace System_Monitor.Services
         /// <summary>
         /// Formats a network throughput.
         /// </summary>
-        public static string FormatNetworkSpeed(Measurement? measurement) =>
-            Format(measurement, ByteFormatter.FormatNetworkSpeed);
+        public static string FormatNetworkSpeed(Measurement? measurement, DateTimeOffset? now = null) =>
+            FormatAtTime(measurement, ByteFormatter.FormatNetworkSpeed, now ?? DateTimeOffset.MinValue);
 
         /// <summary>
         /// True when a measurement carries a value that may be shown.

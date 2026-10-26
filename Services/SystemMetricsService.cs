@@ -10,7 +10,7 @@ using System_Monitor.Models;
 
 namespace System_Monitor.Services
 {
-    public sealed class SystemMetricsService : IMetricsCollector, IDisposable
+    public sealed class SystemMetricsService : ITransactionalMetricsCollector, IDisposable
     {
         /// <summary>
         /// The backend names used in the diagnostic log.
@@ -122,6 +122,44 @@ namespace System_Monitor.Services
         /// period for transient telemetry failures.
         /// </summary>
         private readonly GpuSelectionTracker _gpuSelectionTracker = new();
+        private readonly Dictionary<string, GpuSelectionTracker.State> _primaryCycleSnapshots = new(StringComparer.Ordinal);
+        private string? _activeCycleId;
+        internal int PendingPrimaryCycleCount => _primaryCycleSnapshots.Count;
+        internal int PendingSecondaryCycleCount => _gpuExtrasTracker.PendingCycleCount;
+        internal string? TrackedPrimaryInstanceId => _gpuSelectionTracker.TrackedInstanceId;
+        internal int PrimaryConsecutiveFailures => _gpuSelectionTracker.ConsecutiveFailures;
+        internal IReadOnlyDictionary<string, (bool HasEverQualified, int ConsecutiveFailures)> SecondaryTrackingState =>
+            _gpuExtrasTracker.GetTrackingState();
+
+        public MetricsSnapshot Collect(string cycleId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(cycleId);
+            _primaryCycleSnapshots[cycleId] = _gpuSelectionTracker.CaptureState();
+            _activeCycleId = cycleId;
+            try { return Collect(); }
+            finally { _activeCycleId = null; }
+        }
+
+        public void Accept(string cycleId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(cycleId);
+            _primaryCycleSnapshots.Remove(cycleId);
+            _gpuExtrasTracker.AcceptCycle(cycleId);
+        }
+
+        public void Reject(string cycleId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(cycleId);
+            try
+            {
+                if (_primaryCycleSnapshots.Remove(cycleId, out var saved))
+                    _gpuSelectionTracker.RestoreState(saved);
+            }
+            finally
+            {
+                _gpuExtrasTracker.RollbackCycle(cycleId);
+            }
+        }
 
         /// <summary>
         /// Tracks secondary GPU (extra device) eligibility across cycles
@@ -354,6 +392,7 @@ namespace System_Monitor.Services
         /// </summary>
         private MetricsSnapshot BuildSnapshot(DateTimeOffset timestamp)
         {
+            var cycleGenerationId = _activeCycleId;
             var extrasResult = _gpuExtrasTracker.Update(
                 _backendGpus,
                 _gpuSelectionTracker.TrackedInstanceId,
@@ -361,7 +400,8 @@ namespace System_Monitor.Services
                 _gpuLoadState.ToMeasurement(GpuLoadMetric),
                 _gpuLoadState.DeviceIdFor(GpuLoadMetric),
                 _gpuTemperatureState.ToMeasurement(GpuTemperatureMetric),
-                _gpuTemperatureState.DeviceIdFor(GpuTemperatureMetric));
+                _gpuTemperatureState.DeviceIdFor(GpuTemperatureMetric),
+                cycleGenerationId: cycleGenerationId);
 
             return MetricsSnapshot.Create(
                 timestamp,

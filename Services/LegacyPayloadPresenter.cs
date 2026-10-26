@@ -24,7 +24,7 @@ namespace System_Monitor.Services
     /// </summary>
     public static class LegacyPayloadPresenter
     {
-        public static Dictionary<string, string> Present(MetricsSnapshot snapshot)
+        public static Dictionary<string, string> Present(MetricsSnapshot snapshot, DateTimeOffset? now = null)
         {
             if (snapshot is null)
                 return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -74,7 +74,8 @@ namespace System_Monitor.Services
                 primaryGpu?.DeviceId,
                 gpuVramTotal,
                 primaryGpu?.DeviceId,
-                primaryGpu?.DeviceId);
+                primaryGpu?.DeviceId,
+                now ?? DateTimeOffset.UtcNow);
 
             payload["gpuVram"] = gpuMemory.Display;
             payload["gpuVramLabel"] = GpuMemoryPresentation.LabelText(gpuMemory.Label);

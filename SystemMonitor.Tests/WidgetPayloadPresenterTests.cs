@@ -917,6 +917,396 @@ public class WidgetPayloadPresenterTests
         Assert.Equal(payload2.GetText(WidgetPayloadPresenter.CpuKey), payload3.GetText(WidgetPayloadPresenter.CpuKey));
     }
 
+    // =====================================================================
+    // Publication-time aging for GPU memory, RAM/disk compact, network, and extras
+    // =====================================================================
+
+    [Fact]
+    public void GpuMemoryPresentation_StalesWhenMeasurementsAreOld()
+    {
+        // Snapshot with GPU VRAM readings from 40 seconds ago
+        var now = SampleTime.AddSeconds(40);
+        var old = SampleTime.AddSeconds(-5);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            gpus: new[] { Gpu("gpu0", "NVIDIA GeForce RTX 3080", "NVIDIA", GpuIntegration.Discrete, "pci-0") },
+            readings: new[]
+            {
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "VramUsedBytes",
+                    Measurement = Measurement.AvailableValue(4_000_000_000.0, "B", LhmSnapshotMapper.SourceName + ":GPU Memory Used", old),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "VramTotalBytes",
+                    Measurement = Measurement.AvailableValue(8_000_000_000.0, "B", LhmSnapshotMapper.SourceName + ":GPU Memory Total", old),
+                },
+            });
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, "pci-0", new FixedTimeProvider(now));
+
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.GpuVramKey));
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.GpuVramUsedKey));
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.GpuMemoryCapacityCompactKey));
+    }
+
+    [Fact]
+    public void GpuMemoryPresentation_KeepsFreshWhenMeasurementsAreCurrent()
+    {
+        // Snapshot with GPU VRAM readings from 5 seconds ago (within threshold)
+        var now = SampleTime.AddSeconds(40);
+        var fresh = now.AddSeconds(-5);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            gpus: new[] { Gpu("gpu0", "NVIDIA GeForce RTX 3080", "NVIDIA", GpuIntegration.Discrete, "pci-0") },
+            readings: new[]
+            {
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "VramUsedBytes",
+                    Measurement = Measurement.AvailableValue(4_000_000_000.0, "B", LhmSnapshotMapper.SourceName + ":GPU Memory Used", fresh),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "VramTotalBytes",
+                    Measurement = Measurement.AvailableValue(8_000_000_000.0, "B", LhmSnapshotMapper.SourceName + ":GPU Memory Total", fresh),
+                },
+            });
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, "pci-0", new FixedTimeProvider(now));
+
+        Assert.NotEqual(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.GpuVramKey));
+        Assert.NotEqual(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.GpuVramUsedKey));
+        Assert.NotEqual(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.GpuMemoryCapacityCompactKey));
+        Assert.Contains("%", payload.GetText(WidgetPayloadPresenter.GpuVramKey));
+    }
+
+    [Fact]
+    public void GpuMemoryPresentation_CombinedFigureStalesWhenEitherMeasurementIsOld()
+    {
+        // Used is fresh but total is old -> combined figure should be stale
+        // Individual used figure remains fresh
+        var now = SampleTime.AddSeconds(40);
+        var fresh = now.AddSeconds(-5);
+        var old = SampleTime.AddSeconds(-5);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            gpus: new[] { Gpu("gpu0", "NVIDIA GeForce RTX 3080", "NVIDIA", GpuIntegration.Discrete, "pci-0") },
+            readings: new[]
+            {
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "VramUsedBytes",
+                    Measurement = Measurement.AvailableValue(4_000_000_000.0, "B", LhmSnapshotMapper.SourceName + ":GPU Memory Used", fresh),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "VramTotalBytes",
+                    Measurement = Measurement.AvailableValue(8_000_000_000.0, "B", LhmSnapshotMapper.SourceName + ":GPU Memory Total", old),
+                },
+            });
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, "pci-0", new FixedTimeProvider(now));
+
+        // Combined display (GpuVramKey) is stale because total is stale
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.GpuVramKey));
+        // Individual used figure (GpuVramUsedKey) is fresh because it's within threshold
+        Assert.NotEqual(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.GpuVramUsedKey));
+        // Compact capacity is stale because it's a combined display
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.GpuMemoryCapacityCompactKey));
+    }
+
+    [Fact]
+    public void RamDiskCompactCapacity_StalesWhenMeasurementsAreOld()
+    {
+        var now = SampleTime.AddSeconds(40);
+        var old = SampleTime.AddSeconds(-5);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            ramUsedBytes: Measurement.AvailableValue(1024, "B", "test", old),
+            ramTotalBytes: Measurement.AvailableValue(4096, "B", "test", old),
+            diskUsedBytes: Measurement.AvailableValue(2048, "B", "test", old),
+            diskTotalBytes: Measurement.AvailableValue(8192, "B", "test", old));
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, null, new FixedTimeProvider(now));
+
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.RamCapacityCompactKey));
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.DiskCapacityCompactKey));
+    }
+
+    [Fact]
+    public void RamDiskCompactCapacity_KeepsFreshWhenMeasurementsAreCurrent()
+    {
+        var now = SampleTime.AddSeconds(40);
+        var fresh = now.AddSeconds(-5);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            ramUsedBytes: Measurement.AvailableValue(1024, "B", "test", fresh),
+            ramTotalBytes: Measurement.AvailableValue(4096, "B", "test", fresh),
+            diskUsedBytes: Measurement.AvailableValue(2048, "B", "test", fresh),
+            diskTotalBytes: Measurement.AvailableValue(8192, "B", "test", fresh));
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, null, new FixedTimeProvider(now));
+
+        Assert.NotEqual(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.RamCapacityCompactKey));
+        Assert.NotEqual(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.DiskCapacityCompactKey));
+        Assert.Contains("KB", payload.GetText(WidgetPayloadPresenter.RamCapacityCompactKey));
+        Assert.Contains("KB", payload.GetText(WidgetPayloadPresenter.DiskCapacityCompactKey));
+    }
+
+    [Fact]
+    public void RamDiskCompactCapacity_StalesWhenEitherMeasurementIsOld()
+    {
+        var now = SampleTime.AddSeconds(40);
+        var fresh = now.AddSeconds(-5);
+        var old = SampleTime.AddSeconds(-5);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            ramUsedBytes: Measurement.AvailableValue(1024, "B", "test", fresh),
+            ramTotalBytes: Measurement.AvailableValue(4096, "B", "test", old));
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, null, new FixedTimeProvider(now));
+
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.RamCapacityCompactKey));
+    }
+
+    [Fact]
+    public void NetworkSpeed_StalesWhenMeasurementsAreOld()
+    {
+        var now = SampleTime.AddSeconds(40);
+        var old = SampleTime.AddSeconds(-5);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            networkDownloadBytesPerSec: Measurement.AvailableValue(1024, "B/s", "test", old),
+            networkUploadBytesPerSec: Measurement.AvailableValue(512, "B/s", "test", old));
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, null, new FixedTimeProvider(now));
+
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.NetDownKey));
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.NetUpKey));
+    }
+
+    [Fact]
+    public void NetworkSpeed_KeepsFreshWhenMeasurementsAreCurrent()
+    {
+        var now = SampleTime.AddSeconds(40);
+        var fresh = now.AddSeconds(-5);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            networkDownloadBytesPerSec: Measurement.AvailableValue(2048, "B/s", "test", fresh),
+            networkUploadBytesPerSec: Measurement.AvailableValue(2048, "B/s", "test", fresh));
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, null, new FixedTimeProvider(now));
+
+        Assert.NotEqual(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.NetDownKey));
+        Assert.NotEqual(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.NetUpKey));
+        Assert.Contains("KB/s", payload.GetText(WidgetPayloadPresenter.NetDownKey));
+        Assert.Contains("KB/s", payload.GetText(WidgetPayloadPresenter.NetUpKey));
+    }
+
+    [Fact]
+    public void ExtraDeviceLoadAndTemp_StalesWhenMeasurementsAreOld()
+    {
+        var now = SampleTime.AddSeconds(40);
+        var old = SampleTime.AddSeconds(-5);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            gpus: new[]
+            {
+                Gpu("gpu0", "NVIDIA GeForce RTX 3080", "NVIDIA", GpuIntegration.Discrete, "pci-0"),
+                Gpu("gpu1", "AMD Radeon RX 6700 XT", "AMD", GpuIntegration.Discrete, "pci-1"),
+            },
+            readings: new[]
+            {
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "LoadPercent",
+                    Measurement = Measurement.AvailableValue(30.0, "%", "test", SampleTime.AddSeconds(-5)),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu1",
+                    Metric = "LoadPercent",
+                    Measurement = Measurement.AvailableValue(10.0, "%", LhmSnapshotMapper.SourceName + ":GPU Core", old),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu1",
+                    Metric = "TemperatureC",
+                    Measurement = Measurement.AvailableValue(55.0, "°C", LhmSnapshotMapper.SourceName + ":GPU Core", old),
+                },
+            },
+            gpuTrackedExtraInstanceIds: new[] { "pci-1" });
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, "pci-0", new FixedTimeProvider(now));
+
+        var extra = payload.GetText(WidgetPayloadPresenter.ExtraKey(1));
+        Assert.Contains(WidgetPayloadPresenter.StaleMarker, extra);
+        Assert.Contains("stale", extra, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ExtraDeviceLoadAndTemp_KeepsFreshWhenMeasurementsAreCurrent()
+    {
+        var now = SampleTime.AddSeconds(40);
+        var fresh = now.AddSeconds(-5);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            gpus: new[]
+            {
+                Gpu("gpu0", "NVIDIA GeForce RTX 3080", "NVIDIA", GpuIntegration.Discrete, "pci-0"),
+                Gpu("gpu1", "AMD Radeon RX 6700 XT", "AMD", GpuIntegration.Discrete, "pci-1"),
+            },
+            readings: new[]
+            {
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "LoadPercent",
+                    Measurement = Measurement.AvailableValue(30.0, "%", "test", SampleTime.AddSeconds(-5)),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu1",
+                    Metric = "LoadPercent",
+                    Measurement = Measurement.AvailableValue(10.0, "%", LhmSnapshotMapper.SourceName + ":GPU Core", fresh),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu1",
+                    Metric = "TemperatureC",
+                    Measurement = Measurement.AvailableValue(55.0, "°C", LhmSnapshotMapper.SourceName + ":GPU Core", fresh),
+                },
+            },
+            gpuTrackedExtraInstanceIds: new[] { "pci-1" });
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, "pci-0", new FixedTimeProvider(now));
+
+        var extra = payload.GetText(WidgetPayloadPresenter.ExtraKey(1));
+        Assert.DoesNotContain(WidgetPayloadPresenter.StaleMarker, extra);
+        Assert.Contains("10.0%", extra);
+        Assert.Contains("55.0°C", extra);
+    }
+
+    [Fact]
+    public void ExtraDeviceLoadAndTemp_PartiallyStale_ShowsMixedResult()
+    {
+        var now = SampleTime.AddSeconds(40);
+        var fresh = now.AddSeconds(-5);
+        var old = SampleTime.AddSeconds(-5);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            gpus: new[]
+            {
+                Gpu("gpu0", "NVIDIA GeForce RTX 3080", "NVIDIA", GpuIntegration.Discrete, "pci-0"),
+                Gpu("gpu1", "AMD Radeon RX 6700 XT", "AMD", GpuIntegration.Discrete, "pci-1"),
+            },
+            readings: new[]
+            {
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "LoadPercent",
+                    Measurement = Measurement.AvailableValue(30.0, "%", "test", SampleTime.AddSeconds(-5)),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu1",
+                    Metric = "LoadPercent",
+                    Measurement = Measurement.AvailableValue(10.0, "%", LhmSnapshotMapper.SourceName + ":GPU Core", fresh),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu1",
+                    Metric = "TemperatureC",
+                    Measurement = Measurement.AvailableValue(55.0, "°C", LhmSnapshotMapper.SourceName + ":GPU Core", old),
+                },
+            },
+            gpuTrackedExtraInstanceIds: new[] { "pci-1" });
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, "pci-0", new FixedTimeProvider(now));
+
+        var extra = payload.GetText(WidgetPayloadPresenter.ExtraKey(1));
+        Assert.Contains("10.0%", extra); // load is fresh
+        Assert.Contains(WidgetPayloadPresenter.StaleMarker, extra); // temp is stale
+    }
+
+    [Fact]
+    public void MixedAgeSnapshot_GpuMemoryRamDiskNetworkExtras_EachAgesIndependently()
+    {
+        var now = SampleTime.AddSeconds(40);
+        var old = SampleTime.AddSeconds(-5);
+        var fresh = now.AddSeconds(-1);
+        var snapshot = MetricsSnapshot.Create(
+            SampleTime,
+            gpus: new[]
+            {
+                Gpu("gpu0", "NVIDIA GeForce RTX 3080", "NVIDIA", GpuIntegration.Discrete, "pci-0"),
+                Gpu("gpu1", "AMD Radeon RX 6700 XT", "AMD", GpuIntegration.Discrete, "pci-1"),
+            },
+            ramUsedBytes: Measurement.AvailableValue(1024, "B", "test", fresh),
+            ramTotalBytes: Measurement.AvailableValue(4096, "B", "test", fresh),
+            networkDownloadBytesPerSec: Measurement.AvailableValue(1024, "B/s", "test", fresh),
+            readings: new[]
+            {
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "LoadPercent",
+                    Measurement = Measurement.AvailableValue(30.0, "%", "test", fresh),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "VramUsedBytes",
+                    Measurement = Measurement.AvailableValue(4_000_000_000.0, "B", LhmSnapshotMapper.SourceName + ":GPU Memory Used", old),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu0",
+                    Metric = "VramTotalBytes",
+                    Measurement = Measurement.AvailableValue(8_000_000_000.0, "B", LhmSnapshotMapper.SourceName + ":GPU Memory Total", old),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu1",
+                    Metric = "LoadPercent",
+                    Measurement = Measurement.AvailableValue(10.0, "%", LhmSnapshotMapper.SourceName + ":GPU Load", old),
+                },
+                new DeviceReading
+                {
+                    DeviceId = "gpu1",
+                    Metric = "TemperatureC",
+                    Measurement = Measurement.AvailableValue(55.0, "°C", LhmSnapshotMapper.SourceName + ":GPU Temperature", old),
+                },
+            },
+            gpuTrackedExtraInstanceIds: new[] { "pci-1" });
+
+        var payload = WidgetPayloadPresenter.PresentForPublication(snapshot, "pci-0", new FixedTimeProvider(now));
+
+        // GPU VRAM is stale
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.GpuVramKey));
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.GpuVramUsedKey));
+
+        // RAM compact is fresh
+        Assert.NotEqual(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.RamCapacityCompactKey));
+
+        // Network is fresh
+        Assert.NotEqual(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.NetDownKey));
+
+        // Extra device is stale (load and temp are old)
+        var extra = payload.GetText(WidgetPayloadPresenter.ExtraKey(1));
+        Assert.Contains(WidgetPayloadPresenter.StaleMarker, extra);
+    }
+
     [Fact]
     public void AScalarFromAnotherDevice_IsNotPresentedForTheSelectedDevice()
     {

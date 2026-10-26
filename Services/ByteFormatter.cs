@@ -152,46 +152,28 @@ namespace System_Monitor.Services
             double usedInUnit = usedBytes / divisor;
             double totalInUnit = totalBytes / divisor;
 
-            // Apply precision policy based on total magnitude in the selected unit
-            // Total determines the precision tier for both used and total
-            int totalRounded;
-            if (totalInUnit >= 100)
-                totalRounded = (int)Math.Round(totalInUnit, MidpointRounding.AwayFromZero);
-            else if (totalInUnit >= 10)
-                totalRounded = (int)Math.Round(totalInUnit * 10) / 10; // 1 decimal
-            else
-                totalRounded = (int)Math.Round(totalInUnit * 100) / 100; // 2 decimals
-
-            // Actually, we need to use the tier based on the unrounded totalInUnit
-            // but apply the same tier to both used and total
+            // Apply precision policy based on total magnitude in the selected unit.
+            // Tier determines decimal places: >=100 → whole, 10–100 → 1 decimal, <10 → 2 decimals.
             var tier = totalInUnit >= 100 ? 2 : (totalInUnit >= 10 ? 1 : 0);
 
             string FormatValue(double value, int tier)
             {
-                double rounded;
-                string format;
-                if (tier == 2) // >= 100: whole units
-                {
-                    rounded = Math.Round(value, MidpointRounding.AwayFromZero);
-                    format = "F0";
-                }
-                else if (tier == 1) // >= 10: one decimal
-                {
-                    rounded = Math.Round(value * 10) / 10.0;
-                    format = "F1";
-                }
-                else // < 10: two decimals
-                {
-                    rounded = Math.Round(value * 100) / 100.0;
-                    format = "F2";
-                }
+                // Tier maps to decimal places: 2 (>=100) → 0, 1 (10–100) → 1, 0 (<10) → 2.
+                int decimals = tier switch { 2 => 0, 1 => 1, _ => 2 };
 
-                var str = rounded.ToString(format, CultureInfo.InvariantCulture);
-                // Trim trailing zeros
+                // Round once with AwayFromZero using decimal arithmetic. This
+                // eliminates the double-rounding that would occur if Math.Round
+                // (AwayFromZero) and ToString("F...") (ToEven) were both applied
+                // to a double — their differing midpoint policies could diverge
+                // at floating-point edge cases.
+                var rounded = Math.Round(Convert.ToDecimal(value), decimals, MidpointRounding.AwayFromZero);
+
+                // Decimal.ToString on a whole-number decimal (scale 0) has no
+                // decimal point; otherwise trim trailing zeros.
+                string str = rounded.ToString(CultureInfo.InvariantCulture);
                 if (str.Contains('.'))
-                {
                     str = str.TrimEnd('0').TrimEnd('.');
-                }
+
                 return str;
             }
 
@@ -216,14 +198,20 @@ namespace System_Monitor.Services
         /// <summary>
         /// Formats a percentage.
         /// </summary>
-        public static string FormatPercent(double value) =>
-            $"{value.ToString("F1", CultureInfo.CurrentCulture)}%";
+        public static string FormatPercent(double value)
+        {
+            var rounded = Math.Round(Convert.ToDecimal(value), 1, MidpointRounding.AwayFromZero);
+            return $"{rounded.ToString("F1", CultureInfo.CurrentCulture)}%";
+        }
 
         /// <summary>
         /// Formats a temperature in degrees Celsius.
         /// </summary>
-        public static string FormatTemperature(double value) =>
-            $"{value.ToString("F1", CultureInfo.CurrentCulture)}°C";
+        public static string FormatTemperature(double value)
+        {
+            var rounded = Math.Round(Convert.ToDecimal(value), 1, MidpointRounding.AwayFromZero);
+            return $"{rounded.ToString("F1", CultureInfo.CurrentCulture)}°C";
+        }
 
         /// <summary>
         /// Formats a clock rate, switching to gigahertz above 1000 MHz.
@@ -231,8 +219,12 @@ namespace System_Monitor.Services
         public static string FormatClock(double megahertz)
         {
             if (megahertz >= 1000)
-                return $"{(megahertz / 1000.0).ToString("F2", CultureInfo.CurrentCulture)} GHz";
-            return $"{megahertz.ToString("F0", CultureInfo.CurrentCulture)} MHz";
+            {
+                var ghz = Math.Round(Convert.ToDecimal(megahertz / 1000.0), 2, MidpointRounding.AwayFromZero);
+                return $"{ghz.ToString("F2", CultureInfo.CurrentCulture)} GHz";
+            }
+            var mhz = Math.Round(Convert.ToDecimal(megahertz), 0, MidpointRounding.AwayFromZero);
+            return $"{mhz.ToString("F0", CultureInfo.CurrentCulture)} MHz";
         }
 
         /// <summary>

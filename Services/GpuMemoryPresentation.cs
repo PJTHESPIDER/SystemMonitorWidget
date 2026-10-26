@@ -171,6 +171,28 @@ namespace System_Monitor.Services
         };
 
         /// <summary>
+        /// Formats a measurement with a value formatter, applying staleness check at presentation time.
+        /// </summary>
+        private static string FormatWithStaleness(Measurement? measurement, Func<double, string> formatter, DateTimeOffset now)
+        {
+            if (measurement?.Status == MeasurementStatus.Available
+                && measurement.LastSuccessfulUpdate.HasValue
+                && now - measurement.LastSuccessfulUpdate.Value > TimeSpan.FromSeconds(30))
+                return "stale";
+
+            if (measurement is null)
+                return NotAvailable;
+
+            if (measurement.Status == MeasurementStatus.Stale)
+                return "stale";
+
+            if (measurement.Status != MeasurementStatus.Available || !measurement.Value.HasValue)
+                return NotAvailable;
+
+            return formatter(measurement.Value.Value);
+        }
+
+        /// <summary>
         /// Resolves a GPU-memory display and its heading together.
         ///
         /// <para>
@@ -207,12 +229,14 @@ namespace System_Monitor.Services
         /// <param name="total">The total-memory figure.</param>
         /// <param name="totalDeviceId">The device the total figure describes.</param>
         /// <param name="presentedDeviceId">The device being presented.</param>
+        /// <param name="now">The time at which the payload is being presented. Used for staleness checks.</param>
         public static GpuMemoryDisplay Resolve(
             Measurement? used,
             string? usedDeviceId,
             Measurement? total,
             string? totalDeviceId,
-            string? presentedDeviceId)
+            string? presentedDeviceId,
+            DateTimeOffset now)
         {
             // No usable used figure at all
             if (!GpuMemoryCompatibilityPolicy.IsUsable(used))
@@ -229,8 +253,6 @@ namespace System_Monitor.Services
                     NotAvailable);
             }
 
-            var usedValue = used!.Value!.Value;
-
             var canCombine = GpuMemoryCompatibilityPolicy.CanCombine(
                 used,
                 usedDeviceId,
@@ -240,14 +262,23 @@ namespace System_Monitor.Services
 
             if (canCombine)
             {
+                var usedValue = used!.Value!.Value;
                 var totalValue = total!.Value!.Value;
                 var pct = usedValue / totalValue * 100.0;
 
-                var display =
-                    $"{ByteFormatter.FormatBytes(usedValue)} / {ByteFormatter.FormatBytes(totalValue)} ({pct:F1}%)";
+                // Apply staleness check at display formatting time
+                var usedDisplay = FormatWithStaleness(used, ByteFormatter.FormatBytes, now);
+                var totalDisplay = FormatWithStaleness(total, ByteFormatter.FormatBytes, now);
 
-                // Compact display uses shared-unit precision policy
-                var compactDisplay = ByteFormatter.FormatCapacityCompact(usedValue, totalValue);
+                // If either is stale, the whole combined display is stale
+                var display = (usedDisplay == "stale" || totalDisplay == "stale")
+                    ? "stale"
+                    : $"{usedDisplay} / {totalDisplay} ({pct:F1}%)";
+
+                // Compact display - stale if either measurement is stale
+                var compactDisplay = (usedDisplay == "stale" || totalDisplay == "stale")
+                    ? "stale"
+                    : ByteFormatter.FormatCapacityCompact(usedValue, totalValue);
 
                 var label = GpuMemoryCompatibilityPolicy.CombinedLabelOf(used, total);
 
@@ -255,15 +286,11 @@ namespace System_Monitor.Services
             }
 
             // The used figure alone (pair rejected). Its heading comes from the used figure alone.
-            // Check if total is usable but incompatible (not null, just not compatible)
-            // We don't show the total in compact form because it was rejected by compatibility
-            var usedCompactDisplay = ByteFormatter.FormatCapacityCompact(usedValue, usedValue);
-            // Actually for used-only we show just the used amount with a sensible unit
-            // FormatCapacityCompact requires total, so we'll format used alone
-            var usedAloneDisplay = ByteFormatter.FormatBytes(usedValue);
+            var usedDisplayAlone = FormatWithStaleness(used, ByteFormatter.FormatBytes, now);
+            var usedAloneDisplay = usedDisplayAlone == "stale" ? "stale" : ByteFormatter.FormatBytes(used!.Value!.Value);
 
             return new GpuMemoryDisplay(
-                ByteFormatter.FormatBytes(usedValue),
+                usedDisplayAlone,
                 GpuMemoryCompatibilityPolicy.LabelOf(used),
                 usedAloneDisplay);
         }

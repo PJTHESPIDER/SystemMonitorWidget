@@ -310,4 +310,133 @@ public sealed class SystemMetricsServiceIntegrationTests
         var payload5 = WidgetPayloadPresenter.Present(snapshot5);
         Assert.Equal(gpu1.InstanceId, snapshot5.GpuTrackedInstanceId);
     }
+
+    /// <summary>
+    /// Test 4: Multiple secondary GPUs coexistence with one in grace period.
+    /// Exercises the real SystemMetricsService.Collect() path with:
+    /// - GPU A: primary, consistently readable
+    /// - GPU B: secondary, consistently readable
+    /// - GPU C: secondary, loses displayed telemetry after initial qualification
+    ///
+    /// Verifies:
+    /// - B and C are both eligible and presented during C's failures 1-3
+    /// - B precedes grace-retained C in presentation order
+    /// - C disappears on failure 4
+    /// - B remains present throughout
+    /// - Earlier snapshots remain unchanged (immutability)
+    /// </summary>
+    [Fact]
+    public void ProductionCollection_MultipleSecondaries_OneInGrace_CoexistAndOrderCorrectly()
+    {
+        // GPU A (primary) - RTX 2070 Super
+        var gpuA = NvidiaGpu("/gpu-nvidia/0", "NVIDIA GeForce RTX 2070 Super",
+            @"PCI\VEN_10DE&DEV_1E91&SUBSYS_14581458\4&7AADB68&0&0008");
+        // GPU B (secondary, always readable) - RTX 3070
+        var gpuB = NvidiaGpu("/gpu-nvidia/1", "NVIDIA GeForce RTX 3070",
+            @"PCI\VEN_10DE&DEV_2206&SUBSYS_12341458\4&7AADB68&0&0010");
+        // GPU C (secondary, loses telemetry) - RTX 4070
+        var gpuC = NvidiaGpu("/gpu-nvidia/2", "NVIDIA GeForce RTX 4070",
+            @"PCI\VEN_10DE&DEV_2484&SUBSYS_12341458\4&7AADB68&0&0012");
+
+        var source = new FakeSource(new[] { gpuA, gpuB, gpuC });
+        var service = CreateService(source);
+
+        var snapshots = new List<MetricsSnapshot>();
+
+        // --- CYCLE 1: Initial success - all three GPUs have telemetry ---
+        var snapshot1 = service.Collect();
+        snapshots.Add(snapshot1);
+        var payload1 = WidgetPayloadPresenter.Present(snapshot1);
+
+        // A is primary, B and C are both extras (both have telemetry)
+        // Order: B (lexicographically smaller InstanceId) then C
+        Assert.True(payload1.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.True(payload1.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(2)));
+        Assert.Equal(2, snapshot1.GpuTrackedExtraInstanceIds.Count);
+
+        var extra1Text1 = payload1.GetText(WidgetPayloadPresenter.ExtraKey(1));
+        var extra2Text1 = payload1.GetText(WidgetPayloadPresenter.ExtraKey(2));
+        Assert.Contains("RTX 3070", extra1Text1); // B first (smaller InstanceId)
+        Assert.Contains("RTX 4070", extra2Text1); // C second
+
+        // --- CYCLE 2: C loses telemetry (failure 1), B remains readable ---
+        var gpuCNoTelemetry = gpuC with { Sensors = new List<LhmSensorDescriptor>() };
+        source.SetDevices(new[] { gpuA, gpuB, gpuCNoTelemetry });
+
+        var snapshot2 = service.Collect();
+        snapshots.Add(snapshot2);
+        var payload2 = WidgetPayloadPresenter.Present(snapshot2);
+
+        // Both B and C should still appear: B has telemetry, C in grace (failure 1)
+        // B precedes C (withTelemetry before withoutTelemetry)
+        Assert.True(payload2.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.True(payload2.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(2)));
+        Assert.Equal(2, snapshot2.GpuTrackedExtraInstanceIds.Count);
+
+        var extra1Text2 = payload2.GetText(WidgetPayloadPresenter.ExtraKey(1));
+        var extra2Text2 = payload2.GetText(WidgetPayloadPresenter.ExtraKey(2));
+        Assert.Contains("RTX 3070", extra1Text2); // B first (has telemetry)
+        Assert.Contains("RTX 4070", extra2Text2); // C second (grace)
+        Assert.Contains(gpuB.InstanceId, snapshot2.GpuTrackedExtraInstanceIds);
+        Assert.Contains(gpuC.InstanceId, snapshot2.GpuTrackedExtraInstanceIds);
+
+        // --- CYCLE 3: C failure 2 ---
+        source.SetDevices(new[] { gpuA, gpuB, gpuCNoTelemetry });
+
+        var snapshot3 = service.Collect();
+        snapshots.Add(snapshot3);
+        var payload3 = WidgetPayloadPresenter.Present(snapshot3);
+
+        Assert.True(payload3.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.True(payload3.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(2)));
+        Assert.Equal(2, snapshot3.GpuTrackedExtraInstanceIds.Count);
+        Assert.Contains(gpuB.InstanceId, snapshot3.GpuTrackedExtraInstanceIds);
+        Assert.Contains(gpuC.InstanceId, snapshot3.GpuTrackedExtraInstanceIds);
+
+        // --- CYCLE 4: C failure 3 (last grace cycle) ---
+        source.SetDevices(new[] { gpuA, gpuB, gpuCNoTelemetry });
+
+        var snapshot4 = service.Collect();
+        snapshots.Add(snapshot4);
+        var payload4 = WidgetPayloadPresenter.Present(snapshot4);
+
+        Assert.True(payload4.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.True(payload4.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(2)));
+        Assert.Equal(2, snapshot4.GpuTrackedExtraInstanceIds.Count);
+        Assert.Contains(gpuB.InstanceId, snapshot4.GpuTrackedExtraInstanceIds);
+        Assert.Contains(gpuC.InstanceId, snapshot4.GpuTrackedExtraInstanceIds);
+
+        // --- CYCLE 5: C failure 4 - grace exhausted, C removed ---
+        source.SetDevices(new[] { gpuA, gpuB, gpuCNoTelemetry });
+
+        var snapshot5 = service.Collect();
+        snapshots.Add(snapshot5);
+        var payload5 = WidgetPayloadPresenter.Present(snapshot5);
+
+        // C gone, B still present
+        Assert.True(payload5.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.False(payload5.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(2)));
+        Assert.Single(snapshot5.GpuTrackedExtraInstanceIds);
+        Assert.Contains(gpuB.InstanceId, snapshot5.GpuTrackedExtraInstanceIds);
+        Assert.DoesNotContain(gpuC.InstanceId, snapshot5.GpuTrackedExtraInstanceIds);
+
+        var extra1Text5 = payload5.GetText(WidgetPayloadPresenter.ExtraKey(1));
+        Assert.Contains("RTX 3070", extra1Text5); // B still there
+
+        // --- Verify historical stability: earlier snapshots unchanged ---
+        // snapshot1: both B and C present
+        Assert.Equal(2, snapshot1.GpuTrackedExtraInstanceIds.Count);
+        Assert.Contains(gpuB.InstanceId, snapshot1.GpuTrackedExtraInstanceIds);
+        Assert.Contains(gpuC.InstanceId, snapshot1.GpuTrackedExtraInstanceIds);
+
+        // snapshot2-4: both B and C present
+        Assert.Equal(2, snapshot2.GpuTrackedExtraInstanceIds.Count);
+        Assert.Contains(gpuB.InstanceId, snapshot2.GpuTrackedExtraInstanceIds);
+        Assert.Contains(gpuC.InstanceId, snapshot2.GpuTrackedExtraInstanceIds);
+        Assert.Equal(2, snapshot3.GpuTrackedExtraInstanceIds.Count);
+        Assert.Equal(2, snapshot4.GpuTrackedExtraInstanceIds.Count);
+
+        // snapshot5: only B
+        Assert.Single(snapshot5.GpuTrackedExtraInstanceIds);
+    }
 }

@@ -12,4 +12,12 @@ namespace System_Monitor.Services
     {
         MetricsSnapshot Collect();
     }
+
+    /// <summary>Optional transaction boundary for collectors with persistent state.</summary>
+    public interface ITransactionalMetricsCollector : IMetricsCollector
+    {
+        MetricsSnapshot Collect(string cycleId);
+        void Accept(string cycleId);
+        void Reject(string cycleId);
+    }
 }

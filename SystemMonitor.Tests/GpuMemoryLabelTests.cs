@@ -83,7 +83,8 @@ public class GpuMemoryLabelTests
         var display = GpuMemoryPresentation.Resolve(
             Figure(4_000_000_000.0, DedicatedUsed), Device,
             Figure(8_000_000_000.0, DedicatedTotal), Device,
-            Device);
+            Device,
+            ReadAt);
 
         Assert.Equal(GpuMemoryLabel.Dedicated, display.Label);
         Assert.Equal("Dedicated GPU memory", GpuMemoryPresentation.LabelText(display.Label));
@@ -126,7 +127,8 @@ public class GpuMemoryLabelTests
         var display = GpuMemoryPresentation.Resolve(
             Figure(4_000_000_000.0, SharedUsed), Device,
             Figure(8_000_000_000.0, SharedTotal), Device,
-            Device);
+            Device,
+            ReadAt);
 
         Assert.Equal(GpuMemoryLabel.Shared, display.Label);
         Assert.Equal("Shared GPU memory", GpuMemoryPresentation.LabelText(display.Label));
@@ -168,7 +170,8 @@ public class GpuMemoryLabelTests
         var display = GpuMemoryPresentation.Resolve(
             Figure(4_000_000_000.0, GenericUsed), Device,
             Figure(8_000_000_000.0, GenericTotal), Device,
-            Device);
+            Device,
+            ReadAt);
 
         // The pairing is permitted by the compatibility policy.
         Assert.Contains("%", display.Display);
@@ -215,7 +218,8 @@ public class GpuMemoryLabelTests
         var display = GpuMemoryPresentation.Resolve(
             Figure(4_000_000_000.0, DedicatedUsed), Device,
             Figure(8_000_000_000.0, SharedTotal), Device,
-            Device);
+            Device,
+            ReadAt);
 
         Assert.DoesNotContain("%", display.Display);
         Assert.Equal(GpuMemoryLabel.Dedicated, display.Label);
@@ -229,7 +233,8 @@ public class GpuMemoryLabelTests
         var display = GpuMemoryPresentation.Resolve(
             Figure(4_000_000_000.0, SharedUsed), Device,
             Figure(8_000_000_000.0, DedicatedTotal), Device,
-            Device);
+            Device,
+            ReadAt);
 
         Assert.DoesNotContain("%", display.Display);
         Assert.Equal(GpuMemoryLabel.Shared, display.Label);
@@ -267,7 +272,8 @@ public class GpuMemoryLabelTests
         var display = GpuMemoryPresentation.Resolve(
             Figure(4_000_000_000.0, GenericUsed), Device,
             null, null,
-            Device);
+            Device,
+            ReadAt);
 
         Assert.Equal(GpuMemoryLabel.Unspecified, display.Label);
         Assert.Equal("GPU memory", GpuMemoryPresentation.LabelText(display.Label));
@@ -279,7 +285,8 @@ public class GpuMemoryLabelTests
         var display = GpuMemoryPresentation.Resolve(
             Figure(4_000_000_000.0, "Windows GPU counters"), Device,
             null, null,
-            Device);
+            Device,
+            ReadAt);
 
         Assert.Equal(GpuMemoryLabel.Unspecified, display.Label);
     }
@@ -294,7 +301,8 @@ public class GpuMemoryLabelTests
         var display = GpuMemoryPresentation.Resolve(
             Figure(4_000_000_000.0, DedicatedUsed), Device,
             Figure(8_000_000_000.0, DedicatedTotal), OtherDevice,
-            Device);
+            Device,
+            ReadAt);
 
         Assert.DoesNotContain("%", display.Display);
     }
@@ -305,7 +313,8 @@ public class GpuMemoryLabelTests
         var display = GpuMemoryPresentation.Resolve(
             Figure(4_000_000_000.0, DedicatedUsed), Device,
             Figure(8_000_000_000.0, DedicatedTotal), null,
-            Device);
+            Device,
+            ReadAt);
 
         Assert.DoesNotContain("%", display.Display);
     }
@@ -319,7 +328,8 @@ public class GpuMemoryLabelTests
         var display = GpuMemoryPresentation.Resolve(
             null, null,
             Figure(8_000_000_000.0, DedicatedTotal), OtherDevice,
-            Device);
+            Device,
+            ReadAt);
 
         Assert.Equal(GpuMemoryPresentation.NotAvailable, display.Display);
         Assert.Equal(GpuMemoryLabel.Unspecified, display.Label);
@@ -331,7 +341,8 @@ public class GpuMemoryLabelTests
         var display = GpuMemoryPresentation.Resolve(
             Measurement.Unsupported(DedicatedUsed), Device,
             Measurement.Failed(DedicatedTotal), Device,
-            Device);
+            Device,
+            ReadAt);
 
         Assert.Equal(GpuMemoryPresentation.NotAvailable, display.Display);
         Assert.DoesNotContain("0", display.Display);

@@ -107,6 +107,9 @@ namespace System_Monitor.Services
         // Per-instance-id state for each tracked secondary GPU.
         private readonly Dictionary<string, ExtraTrackingState> _tracked = new(StringComparer.OrdinalIgnoreCase);
 
+        // Saved pre-cycle state per generation ID, for rollback support.
+        private readonly Dictionary<string, Dictionary<string, ExtraTrackingState>> _cycleSnapshots = new(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>
         /// Creates a new tracker with the default grace period.
         /// </summary>
@@ -175,6 +178,7 @@ namespace System_Monitor.Services
         /// <param name="gpuLoadDeviceId">The device the scalar load describes.</param>
         /// <param name="gpuTemperatureC">The snapshot's scalar GPU temperature.</param>
         /// <param name="gpuTemperatureDeviceId">The device the scalar temperature describes.</param>
+        /// <param name="cycleGenerationId">Optional identifier for this collection cycle. If provided, the tracker saves pre-cycle state for potential rollback.</param>
         /// <returns>
         /// The instance ids of GPUs eligible for secondary rows, in presentation order,
         /// and the primary instance id for reference.
@@ -186,26 +190,43 @@ namespace System_Monitor.Services
             Measurement? gpuLoadPercent,
             string? gpuLoadDeviceId,
             Measurement? gpuTemperatureC,
-            string? gpuTemperatureDeviceId)
+            string? gpuTemperatureDeviceId,
+            string? cycleGenerationId = null)
         {
             var devices = (gpus ?? Array.Empty<HardwareDevice>())
                 .Where(g => g is not null)
                 .ToList();
 
-            // Remove tracked devices that are no longer present.
+            // If a generation ID is provided, save pre-cycle state for potential rollback.
+            // This is captured before any state mutations so the pipeline can roll back
+            // the tracker to its pre-cycle condition if the snapshot is not accepted.
+            if (!string.IsNullOrEmpty(cycleGenerationId))
+            {
+                _cycleSnapshots[cycleGenerationId] = new Dictionary<string, ExtraTrackingState>(
+                    _tracked.Count,
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var kvp in _tracked)
+                {
+                    _cycleSnapshots[cycleGenerationId][kvp.Key] = new ExtraTrackingState
+                    {
+                        InstanceId = kvp.Key,
+                        DeviceId = kvp.Value.DeviceId,
+                        ConsecutiveFailures = kvp.Value.ConsecutiveFailures,
+                        HasEverQualified = kvp.Value.HasEverQualified,
+                        LastQualifiedAt = kvp.Value.LastQualifiedAt,
+                        WasPrimaryPreviousCycle = kvp.Value.WasPrimaryPreviousCycle,
+                    };
+                }
+            }
+
+            // Remove tracked devices that are no longer present only after the
+            // saved state has captured membership for rejection rollback.
             var currentInstanceIds = devices
                 .Select(g => g.InstanceId)
                 .Where(id => !string.IsNullOrWhiteSpace(id))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            var toRemove = _tracked.Keys
-                .Where(k => !currentInstanceIds.Contains(k))
-                .ToList();
-
-            foreach (var key in toRemove)
-            {
+            foreach (var key in _tracked.Keys.Where(k => !currentInstanceIds.Contains(k)).ToList())
                 _tracked.Remove(key);
-            }
 
             // Detect role transitions: devices that were primary in previous cycle
             // and are now secondary should have their state reset.
@@ -412,20 +433,51 @@ namespace System_Monitor.Services
         }
 
         private static int IntegrationRank(GpuIntegration integration) => integration switch
-        {
-            GpuIntegration.Discrete => 0,
-            GpuIntegration.Unknown => 1,
-            GpuIntegration.Integrated => 2,
-            _ => 3,
-        };
+                {
+                    GpuIntegration.Discrete => 0,
+                    GpuIntegration.Unknown => 1,
+                    GpuIntegration.Integrated => 2,
+                    _ => 3,
+                };
 
-        /// <summary>
-        /// Gets the current tracking state for diagnostics/testing.
-        /// </summary>
-        public IReadOnlyDictionary<string, (bool HasEverQualified, int ConsecutiveFailures)> GetTrackingState() =>
-            _tracked.ToDictionary(
-                kvp => kvp.Key,
-                kvp => (kvp.Value.HasEverQualified, kvp.Value.ConsecutiveFailures),
-                StringComparer.OrdinalIgnoreCase);
+                /// <summary>
+                /// Rolls back the tracker state to the saved pre-cycle condition for the
+                /// specified generation ID. This is used when a collection snapshot is not
+                /// accepted/presented, so the grace-period counters and qualification state
+                /// are not permanently consumed by a retired or canceled cycle.
+                /// </summary>
+                /// <param name="cycleGenerationId">The generation ID whose pre-cycle state
+                /// should be restored. Must have been provided during a prior Update() call.</summary>
+                public void RollbackCycle(string cycleGenerationId)
+                {
+                    if (_cycleSnapshots.TryGetValue(cycleGenerationId, out var savedState))
+                    {
+                        try
+                        {
+                            _tracked.Clear();
+                            foreach (var kvp in savedState)
+                            {
+                                _tracked[kvp.Key] = kvp.Value;
+                            }
+                        }
+                        finally
+                        {
+                            _cycleSnapshots.Remove(cycleGenerationId);
+                        }
+                    }
+                }
+
+        public void AcceptCycle(string cycleGenerationId) => _cycleSnapshots.Remove(cycleGenerationId);
+
+        public int PendingCycleCount => _cycleSnapshots.Count;
+
+                /// <summary>
+                /// Gets the current tracking state for diagnostics/testing.
+                /// </summary>
+                public IReadOnlyDictionary<string, (bool HasEverQualified, int ConsecutiveFailures)> GetTrackingState() =>
+                    _tracked.ToDictionary(
+                        kvp => kvp.Key,
+                        kvp => (kvp.Value.HasEverQualified, kvp.Value.ConsecutiveFailures),
+                        StringComparer.OrdinalIgnoreCase);
     }
 }
