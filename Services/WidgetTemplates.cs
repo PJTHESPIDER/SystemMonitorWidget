@@ -69,6 +69,13 @@ namespace System_Monitor.Services
         public static string BuildTemplate(WidgetLayoutSize size) => GetTemplateForSize(size);
 
         /// <summary>
+        /// Gets the customization template for CPU temperature setup and GPU selection.
+        /// This template is used when the host requests the widget's customization view
+        /// via <see cref="IWidgetProvider2.OnCustomizationRequested"/>.
+        /// </summary>
+        public static string GetCustomizationTemplate() => CustomizationTemplate;
+
+        /// <summary>
         /// Escapes a string for inclusion in a JSON string literal.
         /// </summary>
         private static string EscapeJson(string value)
@@ -168,13 +175,14 @@ namespace System_Monitor.Services
                       "weight": "Bolder",
                       "spacing": "None"
                     }
-                  ]
+                  ],
+                  "$when": "${cpuTempShow}"
                 }
               ]
             },
             {
               "type": "ColumnSet",
-              "spacing": "None",
+              "spacing": "Small",
               "columns": [
                 {
                   "type": "Column",
@@ -232,7 +240,7 @@ namespace System_Monitor.Services
             },
             {
               "type": "ColumnSet",
-              "spacing": "None",
+              "spacing": "Small",
               "columns": [
                 {
                   "type": "Column",
@@ -265,7 +273,7 @@ namespace System_Monitor.Services
             },
             {
               "type": "ColumnSet",
-              "spacing": "None",
+              "spacing": "Small",
               "columns": [
                 {
                   "type": "Column",
@@ -380,7 +388,8 @@ namespace System_Monitor.Services
                       "weight": "Bolder",
                       "spacing": "None"
                     }
-                  ]
+                  ],
+                  "$when": "${cpuTempShow}"
                 }
               ]
             },
@@ -539,7 +548,7 @@ namespace System_Monitor.Services
             },
             {
               "type": "ColumnSet",
-              "spacing": "Small",
+              "spacing": "Large",
               "columns": [
                 {
                   "type": "Column",
@@ -596,7 +605,8 @@ namespace System_Monitor.Services
                       "weight": "Bolder",
                       "spacing": "None"
                     }
-                  ]
+                  ],
+                  "$when": "${cpuTempShow}"
                 }
               ]
             },
@@ -822,6 +832,85 @@ namespace System_Monitor.Services
                       "spacing": "None"
                     }
                   ]
+                }
+              ]
+            }
+          ]
+        }
+        """;
+
+        /// <summary>
+        /// The customization template for CPU temperature setup and GPU selection.
+        /// This template is used when the host requests the widget's customization view
+        /// via <see cref="IWidgetProvider2.OnCustomizationRequested"/>.
+        /// </summary>
+        public const string CustomizationTemplate = """
+        {
+          "type": "AdaptiveCard",
+          "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+          "version": "1.6",
+          "body": [
+            {
+              "type": "TextBlock",
+              "text": "${cpuTempSetupStatus}",
+              "size": "Default",
+              "isSubtle": false,
+              "spacing": "None",
+              "wrap": true
+            },
+            {
+              "type": "TextBlock",
+              "text": "CPU Temperature",
+              "size": "Small",
+              "isSubtle": true,
+              "spacing": "Medium",
+              "wrap": true
+            },
+            {
+              "type": "ActionSet",
+              "spacing": "Small",
+              "$when": "${cpuTempShow}",
+              "actions": [
+                {
+                  "type": "Action.Submit",
+                  "title": "Hide CPU temperature",
+                  "data": { "action": "toggleCpuTemp" }
+                }
+              ]
+            },
+            {
+              "type": "ActionSet",
+              "spacing": "Small",
+              "$when": "${cpuTempShow == false}",
+              "actions": [
+                {
+                  "type": "Action.Submit",
+                  "title": "Show CPU temperature",
+                  "data": { "action": "toggleCpuTemp" }
+                }
+              ]
+            },
+            {
+              "type": "ActionSet",
+              "spacing": "Small",
+              "$when": "${cpuTempSetupRequired}",
+              "actions": [
+                {
+                  "type": "Action.Submit",
+                  "title": "Set up CPU temperature...",
+                  "data": { "action": "setupCpuTemperature" }
+                }
+              ]
+            },
+            {
+              "type": "ActionSet",
+              "spacing": "Small",
+              "$when": "${cpuTempSetupNotEnabled}",
+              "actions": [
+                {
+                  "type": "Action.Submit",
+                  "title": "Set up CPU temperature...",
+                  "data": { "action": "setupCpuTemperature" }
                 }
               ]
             }

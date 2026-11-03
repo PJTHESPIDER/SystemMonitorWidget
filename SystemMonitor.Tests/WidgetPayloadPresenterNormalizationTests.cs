@@ -72,19 +72,24 @@ public sealed class WidgetPayloadPresenterNormalizationTests
     // =====================================================================
 
     [Theory]
-    [InlineData("AMD Ryzen 7 7800X3D 8-Core Processor", "Ryzen 7 7800X3D 8-Core")]
-    [InlineData("AMD Ryzen 9 5950X", "Ryzen 9 5950X")]
-    [InlineData("Intel Core i7-10875H", "Core i7-10875H")]
-    [InlineData("Intel Core i9-13900K", "Core i9-13900K")]
-    [InlineData("Intel Core i5-12400F", "Core i5-12400F")]
-    [InlineData("NVIDIA GeForce RTX 3080", "GeForce RTX 3080")]
-    [InlineData("NVIDIA GeForce RTX 4090", "GeForce RTX 4090")]
-    [InlineData("Nvidia GeForce RTX 3080", "GeForce RTX 3080")]
-    [InlineData("AMD Radeon RX 6700 XT", "Radeon RX 6700 XT")]
+    [InlineData("AMD Ryzen 7 7800X3D 8-Core Processor", "7 7800X3D")]
+    [InlineData("AMD Ryzen 9 5950X", "9 5950X")]
+    [InlineData("Intel Core i7-10875H", "i7-10875H")]
+    [InlineData("Intel Core i9-13900K", "i9-13900K")]
+    [InlineData("Intel Core i5-12400F", "i5-12400F")]
+    [InlineData("NVIDIA GeForce RTX 3080", "3080")]
+    [InlineData("NVIDIA GeForce RTX 4090", "4090")]
+    [InlineData("Nvidia GeForce RTX 3080", "3080")]
+    [InlineData("AMD Radeon RX 6700 XT", "6700 XT")]
     [InlineData("Intel(R) UHD Graphics 630", "UHD Graphics 630")]
     [InlineData("Intel(R) Iris Xe Graphics", "Iris Xe")]
-    [InlineData("Intel(R) Core(TM) i7-10875H CPU @ 2.30GHz", "Core i7-10875H @ 2.30GHz")]
-    [InlineData("NVIDIA GeForce RTX 4070 Laptop GPU", "GeForce RTX 4070 Laptop")]
+    [InlineData("Intel(R) Core(TM) i7-10875H CPU @ 2.30GHz", "i7-10875H")]
+    [InlineData("NVIDIA GeForce RTX 4070 Laptop GPU", "4070 Laptop")]
+    // Max-Q Design suffix removal (positioned before trailing-suffix removal)
+    [InlineData("NVIDIA GeForce RTX 2070 Super with Max-Q Design", "2070 Super")]
+    [InlineData("NVIDIA GeForce RTX 2070 with Max-Q Design", "2070")]
+    [InlineData("Nvidia GeForce RTX 2070 Super with max-q design", "2070 Super")]
+    [InlineData("NVIDIA GeForce RTX 3080 with Max-Q Design GPU", "3080")]
     public void NormalizeHardwareName_RemovesManufacturerPrefixAndTrailingSuffix(string input, string expected)
     {
         var result = WidgetPayloadPresenter.NormalizeHardwareName(input);
@@ -92,15 +97,18 @@ public sealed class WidgetPayloadPresenterNormalizationTests
     }
 
     [Theory]
-    [InlineData("AMD Ryzen 7 7800X3D Processor", "Ryzen 7 7800X3D")]
-    [InlineData("Intel Core i7 CPU", "Core i7")]
+    [InlineData("AMD Ryzen 7 7800X3D Processor", "7 7800X3D")]
+    [InlineData("Intel Core i7 CPU", "i7")]
     [InlineData("NVIDIA GPU", "")]  // Falls back to "NVIDIA GPU"
     [InlineData("AMD APU", "")]    // Falls back to "AMD APU"
     [InlineData("Intel Graphics", "")]  // Falls back to "Intel Graphics"
-    [InlineData("Intel Core i7-10875H", "Core i7-10875H")]
-    [InlineData("Intel(R) Core(TM) i7-10875H CPU @ 2.30GHz", "Core i7-10875H @ 2.30GHz")]
-    [InlineData("NVIDIA GeForce RTX 4070 Laptop GPU", "GeForce RTX 4070 Laptop")]
+    [InlineData("Intel Core i7-10875H", "i7-10875H")]
+    [InlineData("Intel(R) Core(TM) i7-10875H CPU @ 2.30GHz", "i7-10875H")]
+    [InlineData("NVIDIA GeForce RTX 4070 Laptop GPU", "4070 Laptop")]
     [InlineData("Very Long Unfamiliar Device Name With Many Words That Exceeds Normal Length", "Very Long Unfamiliar Device Name With Many Words That Exceeds Normal Length")]
+    // Max-Q Design with trailing GPU suffix (Max-Q removed first, then GPU suffix)
+    [InlineData("NVIDIA GeForce RTX 2070 Super with Max-Q Design GPU", "2070 Super")]
+    [InlineData("NVIDIA GeForce RTX 2070 with max-q design GPU", "2070")]
     public void NormalizeHardwareName_RemovesTrailingSuffixes(string input, string expected)
     {
         var result = WidgetPayloadPresenter.NormalizeHardwareName(input);
@@ -141,7 +149,7 @@ public sealed class WidgetPayloadPresenterNormalizationTests
     {
         var input = "  AMD    Ryzen    7    7800X3D  ";
         var result = WidgetPayloadPresenter.NormalizeHardwareName(input);
-        Assert.Equal("Ryzen 7 7800X3D", result);
+        Assert.Equal("7 7800X3D", result);
     }
 
     [Fact]
@@ -154,6 +162,40 @@ public sealed class WidgetPayloadPresenterNormalizationTests
         // "CPU" alone normalizes to empty, so falls back to original
         result = WidgetPayloadPresenter.NormalizeHardwareName("CPU");
         Assert.Equal("CPU", result);
+    }
+
+    [Theory]
+    [InlineData("AMD Ryzen 7 7800X3D", "7 7800X3D")]
+    [InlineData("AMD Ryzen 9 7950X3D", "9 7950X3D")]
+    [InlineData("AMD Ryzen 7 5800XT", "7 5800XT")]
+    [InlineData("AMD Ryzen 9 3900XT", "9 3900XT")]
+    [InlineData("NVIDIA GeForce RTX 4090 Ti", "4090 Ti")]
+    [InlineData("NVIDIA GeForce RTX 4080 Super", "4080 Super")]
+    [InlineData("NVIDIA GeForce RTX 4070 Ti Super", "4070 Ti Super")]
+    [InlineData("NVIDIA GeForce RTX 4070 Super", "4070 Super")]
+    [InlineData("NVIDIA GeForce RTX 3080 Ti", "3080 Ti")]
+    [InlineData("AMD Radeon RX 7900 XTX", "7900 XTX")]
+    [InlineData("AMD Radeon RX 6800 XT", "6800 XT")]
+    [InlineData("NVIDIA GeForce RTX 4070 Laptop", "4070 Laptop")]
+    [InlineData("NVIDIA GeForce RTX 4060 Mobile", "4060 Mobile")]
+    [InlineData("AMD Radeon RX 6800M", "6800M")]
+    [InlineData("Intel Core i9-13900HX", "i9-13900HX")]
+    public void NormalizeHardwareName_PreservesModelSuffixes(string input, string expected)
+    {
+        var result = WidgetPayloadPresenter.NormalizeHardwareName(input);
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData("AMD Ryzen 7 7800X3D 8-Core Processor", "7 7800X3D")]
+    [InlineData("Intel Core i7-13700H Processor", "i7-13700H")]
+    [InlineData("NVIDIA GeForce RTX 4070 Laptop GPU", "4070 Laptop")]
+    [InlineData("AMD Radeon RX 7900 XTX Graphics", "7900 XTX")]
+    [InlineData("NVIDIA GeForce RTX 4080 Super GPU", "4080 Super")]
+    public void NormalizeHardwareName_RemovesTrailingSuffixes_WithPreservedModelSuffixes(string input, string expected)
+    {
+        var result = WidgetPayloadPresenter.NormalizeHardwareName(input);
+        Assert.Equal(expected, result);
     }
 
     // =====================================================================
@@ -449,8 +491,8 @@ public sealed class WidgetPayloadPresenterNormalizationTests
 
         var payload = WidgetPayloadPresenter.Present(snapshot);
 
-        // "AMD " removed -> "Ryzen 7 7800X3D 8-Core Processor" -> " Processor" removed -> "Ryzen 7 7800X3D 8-Core"
-        Assert.Equal("Ryzen 7 7800X3D 8-Core", payload.GetText(WidgetPayloadPresenter.CpuNameCompactKey));
+        // "AMD " removed -> "Ryzen 7 7800X3D 8-Core Processor" -> "Ryzen " removed -> "7 7800X3D 8-Core Processor" -> " Processor" removed -> "7 7800X3D 8-Core" -> "8-Core" removed -> "7 7800X3D"
+        Assert.Equal("7 7800X3D", payload.GetText(WidgetPayloadPresenter.CpuNameCompactKey));
         // Full name still available
         Assert.Equal("AMD Ryzen 7 7800X3D 8-Core Processor", payload.GetText(WidgetPayloadPresenter.CpuNameKey));
     }
@@ -463,7 +505,7 @@ public sealed class WidgetPayloadPresenterNormalizationTests
 
         var payload = WidgetPayloadPresenter.Present(snapshot);
 
-        Assert.Equal("GeForce RTX 3080", payload.GetText(WidgetPayloadPresenter.GpuNameCompactKey));
+        Assert.Equal("3080", payload.GetText(WidgetPayloadPresenter.GpuNameCompactKey));
         // Full name still available
         Assert.Equal("NVIDIA GeForce RTX 3080", payload.GetText(WidgetPayloadPresenter.GpuNameKey));
     }

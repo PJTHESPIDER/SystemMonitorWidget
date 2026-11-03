@@ -56,6 +56,7 @@ namespace System_Monitor.Services
         /// <summary>Shown for a value that is known but older than the current sample.</summary>
         public const string StaleMarker = "stale";
 
+        
         /// <summary>
         /// How much older than the current sample a successful reading may be
         /// before the widget is marked stale. One collection interval plus a
@@ -119,6 +120,69 @@ namespace System_Monitor.Services
         public const string SampleTimeKey = "sampleTime";
         public const string LastUpdatedKey = "lastUpdated";
 
+        // --- CPU temperature setup status keys -----------------------------------
+
+        /// <summary>
+        /// Text key for the CPU temperature setup status message. Bound by
+        /// the templates to surface "Set up CPU temperature...", "Setup
+        /// in progress...", and the other presentation states.
+        /// </summary>
+        public const string CpuTempSetupStatusKey = "cpuTempSetupStatus";
+
+        /// <summary>
+        /// Flag indicating that CPU temperature setup is currently in
+        /// progress. When true, the template shows a non-interactive
+        /// progress indicator and does not offer the setup action.
+        /// </summary>
+        public const string CpuTempSetupInProgressKey = "cpuTempSetupInProgress";
+
+        /// <summary>
+        /// Flag indicating that CPU temperature setup is required but not
+        /// yet started. When true, the template offers the "Set up CPU
+        /// temperature..." action.
+        /// </summary>
+        public const string CpuTempSetupRequiredKey = "cpuTempSetupRequired";
+
+        /// <summary>
+        /// Flag indicating that CPU temperature setup completed (successfully
+        /// or the dependency is already installed). When true, the template
+        /// does not offer setup actions.
+        /// </summary>
+        public const string CpuTempSetupCompleteKey = "cpuTempSetupComplete";
+
+        /// <summary>
+        /// Flag indicating that CPU temperature setup failed and can be
+        /// retried. When true, the template offers a retry action.
+        /// </summary>
+        public const string CpuTempSetupFailedKey = "cpuTempSetupFailed";
+
+        /// <summary>
+        /// Flag indicating that CPU temperature setup is not enabled in this
+        /// build. When true, the template shows an explanatory message and
+        /// does not offer the setup action.
+        /// </summary>
+        public const string CpuTempSetupNotEnabledKey = "cpuTempSetupNotEnabled";
+
+        /// <summary>
+        /// Flag indicating that PawnIO is installed but CPU temperature
+        /// sensors are not readable. When true, the template shows an
+        /// explanatory message and may offer the setup action.
+        /// </summary>
+        public const string CpuTempSetupDependencyInstalledSensorUnavailableKey = "cpuTempSetupDependencyInstalledSensorUnavailable";
+
+        /// <summary>
+        /// Flag indicating that setup completed but a reboot is required.
+        /// When true, the template shows an explanatory message.
+        /// </summary>
+        public const string CpuTempSetupRestartRequiredKey = "cpuTempSetupRestartRequired";
+
+        /// <summary>
+        /// Flag indicating whether the per-widget "Show CPU temperature"
+        /// preference is enabled. When false, the CPU temperature row is
+        /// hidden from the template entirely.
+        /// </summary>
+        public const string CpuTempShowKey = "cpuTempShow";
+
         /// <summary>
         /// Every text key the payload produces. The templates bind against
         /// exactly these names.
@@ -134,6 +198,7 @@ namespace System_Monitor.Services
             DiskKey, DiskUsedKey, DiskTotalKey, DiskCombinedKey, DiskPercentKey, DiskCompactKey, DiskCapacityCompactKey,
             NetDownKey, NetUpKey, TempSummaryKey, AcpiThermalZoneTempKey,
             SampleTimeKey, LastUpdatedKey,
+            CpuTempSetupStatusKey,
         };
 
         /// <summary>
@@ -168,6 +233,14 @@ namespace System_Monitor.Services
             ExtraAvailableKey(1),
             ExtraAvailableKey(2),
             ExtraAvailableKey(3),
+            CpuTempSetupInProgressKey,
+            CpuTempSetupRequiredKey,
+            CpuTempSetupCompleteKey,
+            CpuTempSetupFailedKey,
+            CpuTempSetupNotEnabledKey,
+            CpuTempSetupDependencyInstalledSensorUnavailableKey,
+            CpuTempSetupRestartRequiredKey,
+            CpuTempShowKey,
         };
 
         /// <summary>
@@ -195,13 +268,29 @@ namespace System_Monitor.Services
             MetricsSnapshot? snapshot,
             string? selectedGpuInstanceId = null,
             int maxExtraDevices = MaxExtraDevices,
-            DateTimeOffset? currentTime = null)
+            DateTimeOffset? currentTime = null,
+            bool showCpuTemperature = true)
         {
             var text = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var flags = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
+            // Initialize all known flag keys to false so the payload always
+            // carries every flag the templates may reference.
+            foreach (var flagKey in FlagKeys)
+            {
+                flags[flagKey] = false;
+            }
+
             if (snapshot is null)
-                return FillEmpty(text, flags);
+            {
+                var empty = FillEmpty(text, flags);
+                // The "Show CPU temperature" preference is per-widget, not
+                // sensor-derived: it must be set even when the snapshot is
+                // null, otherwise the user's choice is lost on an empty
+                // payload.
+                flags[CpuTempShowKey] = showCpuTemperature;
+                return empty;
+            }
 
             // --- CPU -------------------------------------------------------
             // The CPU figures are system-level: the CPU is not a
@@ -216,6 +305,18 @@ namespace System_Monitor.Services
             text[CpuNameKey] = FormatDeviceName(cpuDevice?.DisplayName);
             text[CpuVendorKey] = FormatVendor(cpuDevice?.Vendor);
             text[CpuNameCompactKey] = NormalizeHardwareName(cpuDevice?.DisplayName);
+
+            // The "Show CPU temperature" per-widget preference gates whether
+            // the CPU temperature row is rendered. The temperature value is
+            // still populated in the payload so it is available if the user
+            // re-enables the row, but the template uses this flag to
+            // conditionally show the row.
+            flags[CpuTempShowKey] = showCpuTemperature;
+
+            // CPU temperature setup status defaults to empty (no active setup
+            // state). The status will be merged in by the provider via
+            // PresentCpuTemperatureSetupState.
+            text[CpuTempSetupStatusKey] = string.Empty;
 
             // --- GPU: the presented device -----------------------------------
             var selection = GpuSelectionPolicy.Resolve(
@@ -392,8 +493,142 @@ namespace System_Monitor.Services
         public static WidgetPayload PresentForPublication(
             MetricsSnapshot? snapshot,
             string? selectedGpuInstanceId,
-            TimeProvider timeProvider) =>
-            Present(snapshot, selectedGpuInstanceId, currentTime: (timeProvider ?? throw new ArgumentNullException(nameof(timeProvider))).GetUtcNow());
+            TimeProvider timeProvider,
+            bool showCpuTemperature = true) =>
+            Present(snapshot, selectedGpuInstanceId, currentTime: (timeProvider ?? throw new ArgumentNullException(nameof(timeProvider))).GetUtcNow(), showCpuTemperature: showCpuTemperature);
+
+        /// <summary>
+        /// Merges the CPU temperature setup status into a payload.
+        ///
+        /// <para>
+        /// This is the bridge between the backend setup state and the
+        /// template's <c>$when</c> conditions. The caller supplies the
+        /// resolved presentation state; the presenter translates it into the
+        /// text and flag keys the templates bind against.
+        /// </para>
+        ///
+        /// <para>
+        /// The existing text/flag dictionaries are modified in place, so the
+        /// caller should produce them from <see cref="Present"/>, call this
+        /// method on the dictionaries, and then build the payload.
+        /// </para>
+        /// </summary>
+        /// <param name="text">The mutable text dictionary to augment.</param>
+        /// <param name="flags">The mutable flag dictionary to augment.</param>
+        /// <param name="state">The resolved setup presentation state.</param>
+        public static void PresentCpuTemperatureSetupState(
+            Dictionary<string, string> text,
+            Dictionary<string, bool> flags,
+            CpuTemperatureSetupState state)
+        {
+            // Defaults: no setup state is active unless the state says so.
+            flags[CpuTempSetupInProgressKey] = false;
+            flags[CpuTempSetupRequiredKey] = false;
+            flags[CpuTempSetupCompleteKey] = false;
+            flags[CpuTempSetupFailedKey] = false;
+            flags[CpuTempSetupNotEnabledKey] = false;
+            flags[CpuTempSetupDependencyInstalledSensorUnavailableKey] = false;
+            flags[CpuTempSetupRestartRequiredKey] = false;
+
+            text[CpuTempSetupStatusKey] = state.Detail ?? string.Empty;
+
+            switch (state.State)
+            {
+                case CpuTempSetupPresentationState.SetupNotEnabled:
+                    flags[CpuTempSetupNotEnabledKey] = true;
+                    break;
+
+                case CpuTempSetupPresentationState.CheckingSupport:
+                    // Neutral: no flag raised, status text shown.
+                    break;
+
+                case CpuTempSetupPresentationState.SetupRequired:
+                    flags[CpuTempSetupRequiredKey] = true;
+                    break;
+
+                case CpuTempSetupPresentationState.SetupInProgress:
+                    flags[CpuTempSetupInProgressKey] = true;
+                    break;
+
+                case CpuTempSetupPresentationState.SetupComplete:
+                case CpuTempSetupPresentationState.Available:
+                    flags[CpuTempSetupCompleteKey] = true;
+                    break;
+
+                case CpuTempSetupPresentationState.SetupFailed:
+                case CpuTempSetupPresentationState.SetupCancelled:
+                    flags[CpuTempSetupFailedKey] = true;
+                    break;
+
+                case CpuTempSetupPresentationState.DependencyInstalledSensorUnavailable:
+                    flags[CpuTempSetupDependencyInstalledSensorUnavailableKey] = true;
+                    break;
+
+                case CpuTempSetupPresentationState.RestartRequired:
+                    flags[CpuTempSetupRestartRequiredKey] = true;
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Merges the CPU temperature setup status into a payload by setting
+        /// its internal text and flag values.
+        /// </summary>
+        /// <param name="payload">The payload to augment.</param>
+        /// <param name="state">The resolved setup presentation state.</param>
+        public static WidgetPayload PresentCpuTemperatureSetupState(
+            WidgetPayload payload,
+            CpuTemperatureSetupState state)
+        {
+            PresentCpuTemperatureSetupState(
+                new Dictionary<string, string>(payload.Text, StringComparer.OrdinalIgnoreCase),
+                new Dictionary<string, bool>(payload.Flags, StringComparer.OrdinalIgnoreCase),
+                state);
+
+            // The payload's internal dictionaries are mutable (they are
+            // Dictionary<string, ...>), but exposed as IReadOnlyDictionary.
+            // SetText/SetFlag mutate the internal dictionaries directly.
+            payload.SetText(CpuTempSetupStatusKey, state.Detail ?? string.Empty);
+
+            // Reset all flags to false first.
+            payload.SetFlag(CpuTempSetupInProgressKey, false);
+            payload.SetFlag(CpuTempSetupRequiredKey, false);
+            payload.SetFlag(CpuTempSetupCompleteKey, false);
+            payload.SetFlag(CpuTempSetupFailedKey, false);
+            payload.SetFlag(CpuTempSetupNotEnabledKey, false);
+            payload.SetFlag(CpuTempSetupDependencyInstalledSensorUnavailableKey, false);
+            payload.SetFlag(CpuTempSetupRestartRequiredKey, false);
+
+            // Then set the appropriate flag.
+            switch (state.State)
+            {
+                case CpuTempSetupPresentationState.SetupNotEnabled:
+                    payload.SetFlag(CpuTempSetupNotEnabledKey, true);
+                    break;
+                case CpuTempSetupPresentationState.SetupRequired:
+                    payload.SetFlag(CpuTempSetupRequiredKey, true);
+                    break;
+                case CpuTempSetupPresentationState.SetupInProgress:
+                    payload.SetFlag(CpuTempSetupInProgressKey, true);
+                    break;
+                case CpuTempSetupPresentationState.SetupComplete:
+                case CpuTempSetupPresentationState.Available:
+                    payload.SetFlag(CpuTempSetupCompleteKey, true);
+                    break;
+                case CpuTempSetupPresentationState.SetupFailed:
+                case CpuTempSetupPresentationState.SetupCancelled:
+                    payload.SetFlag(CpuTempSetupFailedKey, true);
+                    break;
+                case CpuTempSetupPresentationState.DependencyInstalledSensorUnavailable:
+                    payload.SetFlag(CpuTempSetupDependencyInstalledSensorUnavailableKey, true);
+                    break;
+                case CpuTempSetupPresentationState.RestartRequired:
+                    payload.SetFlag(CpuTempSetupRestartRequiredKey, true);
+                    break;
+            }
+
+            return payload;
+        }
 
         /// <summary>
         /// Fills a payload with the "not available" placeholder for every
@@ -437,6 +672,11 @@ namespace System_Monitor.Services
             text[GpuMemoryCapacityCompactKey] = NotAvailable;
             text[RamCapacityCompactKey] = NotAvailable;
             text[DiskCapacityCompactKey] = NotAvailable;
+
+            // CPU temperature setup defaults: when no snapshot is present the
+            // setup status is empty and no setup flags are raised. The
+            // flag loop above already set them all to false.
+            text[CpuTempSetupStatusKey] = string.Empty;
 
             return new WidgetPayload(text, flags);
         }
@@ -706,10 +946,13 @@ namespace System_Monitor.Services
             // Remove trademark markers first (e.g., "Intel(R) Core(TM)" -> "Intel Core")
             name = System.Text.RegularExpressions.Regex.Replace(name, @"\s*\([RTM]{1,2}\)\s*", " ");
 
-            // Remove manufacturer prefixes but preserve model family identifiers (GeForce, Radeon, Ryzen, Core, etc.)
+            // Normalize whitespace early so manufacturer prefix matching works with multiple spaces
+            name = System.Text.RegularExpressions.Regex.Replace(name, @"\s+", " ");
+
+            // Remove manufacturer prefixes but preserve model family identifiers
             // Order matters: LONGER specific patterns first, then generic manufacturer names
-            // We remove "Intel " to leave "Core i7", but we remove only "NVIDIA " to leave "GeForce RTX"
-            // "AMD " removes to leave "Ryzen 7", "Radeon RX" - preserving the model family
+            // We remove "Intel " to leave model family, but remove only "NVIDIA " to leave "GeForce RTX"
+            // "AMD " removes to leave model family, "Radeon RX" - preserving the model family
             var manufacturerPrefixes = new[]
             {
                 "Intel(R) ",        // "Intel(R) i7" -> "i7", "Intel(R) Core i7" -> "Core i7"
@@ -728,40 +971,117 @@ namespace System_Monitor.Services
                 }
             }
 
-            // Now handle the "Core " prefix that we want to keep for Intel Core models
-            // If the name starts with "Core " and looks like an Intel CPU model (followed by i3/i5/i7/i9 or numbers),
-            // KEEP "Core". Otherwise remove it (e.g., "Core 2 Duo" -> "2 Duo", "Core Solo" -> "Solo").
-            if (name.StartsWith("Core ", StringComparison.OrdinalIgnoreCase))
+            // Remove family prefixes (GeForce, Radeon, Core, Ryzen) that are not part of
+            // meaningful model identifiers. These are removed after manufacturer prefixes
+            // so that e.g. "GeForce RTX 2070 Super" -> "RTX 2070 Super".
+            var familyPrefixes = new[]
             {
-                var afterCore = name.Substring(5).TrimStart();
-                // Check if it looks like an Intel Core model (i3/i5/i7/i9 or similar)
-                bool isIntelCoreModel = System.Text.RegularExpressions.Regex.IsMatch(afterCore, @"^i[3579]\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
-                    || System.Text.RegularExpressions.Regex.IsMatch(afterCore, @"^\d+[\s\-]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                "GeForce ",         // "GeForce RTX 2070 Super" -> "RTX 2070 Super"
+                "Radeon ",         // "Radeon RX 6700 XT" -> "RX 6700 XT"
+                "Core ",           // "Core i7-10875H" -> "i7-10875H" (always strip - Core is a family prefix)
+                "Ryzen ",          // "Ryzen 7 7800X3D" -> "7 7800X3D" (always strip - Ryzen is a family prefix)
+            };
 
-                if (!isIntelCoreModel)
+            foreach (var prefix in familyPrefixes)
+            {
+                if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 {
-                    name = afterCore;
+                    name = name.Substring(prefix.Length);
+                    break; // Only remove one family prefix
                 }
             }
 
-            // Also handle cases where suffix is followed by additional text like "@ 2.30GHz"
-            // Remove " CPU" (but keep "@ 2.30GHz"), " Processor" etc. when followed by "@"
-            var trailingSuffixesWithContent = new[]
+            // Remove RX/RTX prefixes from GPU model identifiers
+            // These are NVIDIA/AMD product line markers, not meaningful model numbers
+            var gpuLinePrefixes = new[]
             {
-                " CPU", " cpu",
-                " Processor", " processor",
-                " APU", " apu",
+                "RTX ",    // "RTX 3080" -> "3080"
+                "RX ",     // "RX 6700 XT" -> "6700 XT"
             };
-
-            foreach (var suffix in trailingSuffixesWithContent)
+            foreach (var prefix in gpuLinePrefixes)
             {
-                int idx = name.IndexOf(suffix + " @", StringComparison.OrdinalIgnoreCase);
+                if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    name = name.Substring(prefix.Length);
+                    break; // Only remove one prefix
+                }
+            }
+
+            // Remove trailing "with Max-Q Design" (case-insensitive) before
+            // trailing-suffix removal so that a newly-exposed "GPU" suffix
+            // is also stripped by the trailing-suffix loop that follows.
+            // We remove it wherever it appears (not just at end) because
+            // it may be followed by other trailing suffixes like " GPU".
+            var maxQSuffixes = new[]
+            {
+                "with Max-Q Design", "with max-q design", "with Max-q Design",
+                "With Max-Q Design", "With max-q design", "With Max-q Design",
+            };
+            foreach (var suffix in maxQSuffixes)
+            {
+                int idx = name.IndexOf(suffix, StringComparison.OrdinalIgnoreCase);
                 if (idx >= 0)
                 {
-                    // Remove the suffix but keep everything after " @"
-                    var afterAt = name.Substring(idx + suffix.Length); // starts with " @..."
-                    name = name.Substring(0, idx).Trim() + " " + afterAt.Trim();
-                    break;
+                    // Remove the suffix and any trailing space
+                    int startIdx = idx;
+                    if (startIdx > 0 && name[startIdx - 1] == ' ')
+                        startIdx--;
+                    int endIdx = idx + suffix.Length;
+                    if (endIdx < name.Length && name[endIdx] == ' ')
+                        endIdx++;
+                    name = name.Substring(0, startIdx) + name.Substring(endIdx);
+                    break; // Only remove one suffix
+                }
+            }
+
+            // Remove core-count suffixes such as "8-Core" or "8-Core Processor"
+            // These are removed only when they appear at the END of the name
+            var coreCountSuffixes = new[]
+            {
+                "8-Core Processor", "8-core Processor",
+                "8-Core", "8-core",
+                "6-Core Processor", "6-core Processor",
+                "6-Core", "6-core",
+                "4-Core Processor", "4-core Processor",
+                "4-Core", "4-core",
+            };
+            foreach (var suffix in coreCountSuffixes)
+            {
+                if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    int startIdx = name.Length - suffix.Length;
+                    if (startIdx > 0 && name[startIdx - 1] == ' ')
+                        startIdx--;
+                    name = name.Substring(0, startIdx);
+                    break; // Only remove one suffix
+                }
+            }
+
+            // Remove trailing frequency annotations such as "@ 2.30GHz" entirely
+            // (not just moving them after the name). The " @" pattern with trailing
+            // frequency is removed completely.
+            int freqIdx = name.IndexOf(" @", StringComparison.OrdinalIgnoreCase);
+            if (freqIdx >= 0)
+            {
+                // Check if everything after " @" looks like a frequency annotation
+                // (digits, dot, GHz, MHz, etc.) - if so, remove it entirely
+                var afterAt = name.Substring(freqIdx + 1).Trim();
+                if (afterAt.Length > 0)
+                {
+                    // Heuristic: if the text after " @" contains "GHz" or "MHz" or
+                    // is just a number, remove the entire " @..." portion
+                    bool looksLikeFrequency = afterAt.Contains("GHz") || afterAt.Contains("MHz")
+                                              || System.Text.RegularExpressions.Regex.IsMatch(afterAt, @"^\d+\.?\d*$",
+                                                  System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+                    if (looksLikeFrequency)
+                    {
+                        // Remove " @..." including the space before @
+                        int startIdx = freqIdx;
+                        if (startIdx > 0 && name[startIdx - 1] == ' ')
+                            startIdx--;
+                        name = name.Substring(0, startIdx);
+                    }
                 }
             }
 
