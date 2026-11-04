@@ -34,6 +34,14 @@ public class LhmSensorSourceTests
             return _devices;
         }
 
+        public Task<ReinitializeResult> ReinitializeAsync(CancellationToken ct = default) =>
+            Task.FromResult(new ReinitializeResult
+            {
+                Outcome = ReinitializationOutcome.Success,
+                WasAvailableBefore = IsAvailable,
+                CompletedAt = DateTimeOffset.UtcNow,
+            });
+
         public void Dispose() => IsDisposed = true;
     }
 

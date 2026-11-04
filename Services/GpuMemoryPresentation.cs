@@ -104,7 +104,7 @@ namespace System_Monitor.Services
         /// The heading for a figure whose memory pool was established as
         /// dedicated video memory.
         /// </summary>
-        public const string DedicatedLabel = "Dedicated GPU memory";
+        public const string DedicatedLabel = "VRAM";
 
         /// <summary>
         /// The heading for a figure whose memory pool was established as
@@ -134,7 +134,7 @@ namespace System_Monitor.Services
         /// little room for it.
         /// </para>
         /// </summary>
-        public const string DedicatedLabelCompact = "Dedicated memory";
+        public const string DedicatedLabelCompact = "VRAM";
 
         /// <summary>
         /// The compact heading for a figure whose memory pool was

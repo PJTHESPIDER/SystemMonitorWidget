@@ -67,7 +67,46 @@ public sealed class FakeProcessRunner : IProcessRunner
         _results.Enqueue(new ProcessRunResult(-1, string.Empty, string.Empty, true));
         return this;
     }
+
+    private readonly Queue<ElevatedRunResult> _elevatedResults = new();
+
+    /// <summary>
+    /// Queues an elevated run result for <see cref="RunElevatedAsync"/>.
+    /// When no queued result is available, returns a successful exit (code 0).
+    /// </summary>
+    public FakeProcessRunner WithElevatedResult(ElevatedRunResult result)
+    {
+        _elevatedResults.Enqueue(result);
+        return this;
+    }
+
+    /// <summary>
+    /// The default elevated result returned when the queue is empty.
+    /// Simulates a successful installer exit.
+    /// </summary>
+    public ElevatedRunResult DefaultElevatedResult { get; set; } =
+        new ElevatedRunResult(0, null, false, false);
+
+    /// <summary>One entry per elevated invocation, in order.</summary>
+    public List<ElevatedInvocation> ElevatedInvocations { get; } = new();
+
+    public Task<ElevatedRunResult> RunElevatedAsync(
+        string fileName,
+        string arguments,
+        CancellationToken cancellationToken = default)
+    {
+        ElevatedInvocations.Add(new ElevatedInvocation(fileName, arguments));
+
+        var result = _elevatedResults.Count > 0
+            ? _elevatedResults.Dequeue()
+            : DefaultElevatedResult;
+
+        return Task.FromResult(result);
+    }
 }
 
 /// <summary>One recorded call to the fake runner.</summary>
 public sealed record FakeInvocation(string FileName, string Arguments, TimeSpan Timeout);
+
+/// <summary>One recorded elevated call to the fake runner.</summary>
+public sealed record ElevatedInvocation(string FileName, string Arguments);

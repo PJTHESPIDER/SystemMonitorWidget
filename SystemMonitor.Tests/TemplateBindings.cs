@@ -68,7 +68,7 @@ internal static class TemplateBindings
             // A host property is namespaced with a leading "$", so the
             // identifier scan never sees it: "$host" is not matched by the
             // pattern above, because "$" is not a valid first character.
-            if (identifier is "true" or "false")
+            if (identifier is "true" or "false" or "if" or "Small" or "None" or "Default" or "Medium" or "Large" or "ExtraSmall")
                 continue;
 
             yield return identifier;

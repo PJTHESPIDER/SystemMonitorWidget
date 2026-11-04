@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using System_Monitor.Models;
 
 namespace System_Monitor.Services
 {
@@ -91,5 +94,29 @@ namespace System_Monitor.Services
         /// failures such as blocked drivers.
         /// </summary>
         IReadOnlyList<LhmDeviceDescriptor> Read();
+
+        /// <summary>
+        /// Closes the existing backend and re-opens it, so that a newly
+        /// installed driver (e.g. PawnIO) is picked up by a fresh Computer
+        /// instance.
+        ///
+        /// <para>
+        /// Serialized against concurrent <see cref="Read"/> and <see cref="Dispose"/>.
+        /// Returns a structured <see cref="ReinitializeResult"/> — no exceptions
+        /// for expected outcomes (initialization failure, disposal, cancellation).
+        /// </para>
+        ///
+        /// <para>
+        /// Does not perform installation or elevate. The caller is responsible
+        /// for ensuring the driver is already installed before calling.
+        /// </para>
+        ///
+        /// <para>
+        /// Cancellation is cooperative: the method checks <paramref name="cancellationToken"/>
+        /// before performing destructive operations (close), but cannot interrupt
+        /// synchronous native initialization in the underlying library.
+        /// </para>
+        /// </summary>
+        Task<ReinitializeResult> ReinitializeAsync(CancellationToken cancellationToken = default);
     }
 }

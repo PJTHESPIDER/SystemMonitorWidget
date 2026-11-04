@@ -215,6 +215,7 @@ namespace System_Monitor.Services
         // --- Flag keys ---------------------------------------------------
 
         public const string GpuDevicePresentKey = "gpuDevicePresent";
+        public const string GpuSectionPresentKey = "gpuSectionPresent";
         public const string GpuHasExtraKey = "gpuHasExtra";
         public const string SampleIsStaleKey = "sampleIsStale";
         public const string GpuSelectionMissingKey = "gpuSelectionMissing";
@@ -227,6 +228,7 @@ namespace System_Monitor.Services
         public static readonly IReadOnlyList<string> FlagKeys = new[]
         {
             GpuDevicePresentKey,
+            GpuSectionPresentKey,
             GpuHasExtraKey,
             SampleIsStaleKey,
             GpuSelectionMissingKey,
@@ -434,6 +436,10 @@ namespace System_Monitor.Services
 
             text[GpuExtrasKey] = string.Join("\n", extras);
             flags[GpuHasExtraKey] = extras.Count > 0;
+            flags[GpuSectionPresentKey] =
+                gpu is not null
+                || extras.Count > 0
+                || flags[GpuSelectionMissingKey];
 
             // --- RAM ---------------------------------------------------------
             text[RamKey] = FormatUsage(snapshot.RamUsedBytes, snapshot.RamTotalBytes, snapshot.RamPercent);

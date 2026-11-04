@@ -46,6 +46,23 @@ namespace System_Monitor.Services
         /// </para>
         /// </summary>
         public string? SelectedGpuInstanceId { get; init; }
+
+        /// <summary>
+        /// Whether this widget shows the CPU temperature row.
+        ///
+        /// <para>
+        /// This is a per-widget display preference. It is persisted in the
+        /// host's <c>CustomState</c> alongside the GPU selection, so each
+        /// widget remembers its own visibility choice across restarts.
+        /// </para>
+        ///
+        /// <para>
+        /// The default is <c>true</c>: the CPU temperature row is shown when
+        /// the backend can read it. Setting this to <c>false</c> hides the
+        /// row regardless of whether a temperature is available.
+        /// </para>
+        /// </summary>
+        public bool ShowCpuTemperature { get; init; } = true;
     }
 
     /// <summary>
@@ -186,6 +203,35 @@ namespace System_Monitor.Services
                     return true;
 
                 var updated = existing with { SelectedGpuInstanceId = normalized };
+
+                if (_entries.TryUpdate(widgetId, updated, existing))
+                    return true;
+            }
+        }
+
+        /// <summary>
+        /// Updates the CPU temperature display preference of an existing
+        /// widget. Returns false when the widget is not registered.
+        ///
+        /// <para>
+        /// The entry is replaced atomically, so a reader never observes a
+        /// partially updated state.
+        /// </para>
+        /// </summary>
+        public bool TrySetCpuTempPreference(string widgetId, bool show)
+        {
+            if (string.IsNullOrEmpty(widgetId))
+                return false;
+
+            while (true)
+            {
+                if (!_entries.TryGetValue(widgetId, out var existing) || existing is null)
+                    return false;
+
+                if (existing.ShowCpuTemperature == show)
+                    return true;
+
+                var updated = existing with { ShowCpuTemperature = show };
 
                 if (_entries.TryUpdate(widgetId, updated, existing))
                     return true;

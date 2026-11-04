@@ -9,13 +9,9 @@ using Xunit;
 namespace SystemMonitor.Tests;
 
 /// <summary>
-/// Tests for the GPU extras tracker's grace period behavior.
-///
-/// <para>
-/// The tracker wraps the pure telemetry-aware extra-device ordering with
-/// stateful grace-period logic. These tests pin the exact cycle-by-cycle
-/// behavior so a transient failure cannot silently remove a secondary GPU row.
-/// </para>
+/// Regression tests for GpuExtrasTracker enforcing load-only qualification
+/// (load >= 5%, zero excluded) and a 6-second time-based retention window.
+/// Uses FakeTimeProvider for deterministic time advancement.
 /// </summary>
 public class GpuExtrasTrackerTests
 {
@@ -69,34 +65,48 @@ public class GpuExtrasTrackerTests
             gpuVramTotalBytes: gpuVramTotalBytes,
             gpuVramTotalDeviceId: gpuVramTotalDeviceId);
 
+    // ------------------------------------------------------------------
+    // Qualification rules: only load >= 5% qualifies
+    // ------------------------------------------------------------------
+
     [Fact]
-    public void Tracker_ReadableSecondaryDevice_Appears()
+    public void Tracker_QualifyingLoad_AboveThreshold_Qualifies()
     {
-        var tracker = new GpuExtrasTracker();
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
         var devices = new[]
         {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete, "NVIDIA RTX 3080"),
-            Gpu("gpu1", "pci-1", GpuIntegration.Discrete, "AMD RX 6800"),
+            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
+            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
         };
         var snapshot = Snapshot(
             gpus: devices,
-            readings: new[]
-            {
-                Read("gpu0", "LoadPercent", 10.0),
-                Read("gpu1", "LoadPercent", 5.0),
-            });
+            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
 
         var result = tracker.Update(devices, "pci-0", snapshot, null, null, null, null);
-
-        // Both devices have load telemetry. The primary is gpu0, so gpu1 qualifies as extra.
         Assert.Contains("pci-1", result.EligibleInstanceIds);
-        Assert.DoesNotContain("pci-0", result.EligibleInstanceIds); // Primary excluded
     }
 
     [Fact]
-    public void Tracker_ValidZeroLoad_Qualifies()
+    public void Tracker_QualifyingLoad_AtThreshold_Qualifies()
     {
-        var tracker = new GpuExtrasTracker();
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
+        var devices = new[]
+        {
+            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
+            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
+        };
+        var snapshot = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu1", "LoadPercent", 5.0) });
+
+        var result = tracker.Update(devices, "pci-0", snapshot, null, null, null, null);
+        Assert.Contains("pci-1", result.EligibleInstanceIds);
+    }
+
+    [Fact]
+    public void Tracker_ZeroLoad_DoesNotQualify()
+    {
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
         var devices = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
@@ -106,33 +116,48 @@ public class GpuExtrasTrackerTests
             gpus: devices,
             readings: new[] { Read("gpu1", "LoadPercent", 0.0) });
 
-        var result = tracker.Update(devices, "gpu0", snapshot, null, null, null, null);
-
-        // 0% is a valid reading. Integrated GPU qualifies as extra.
-        Assert.Contains("pci-1", result.EligibleInstanceIds);
+        var result = tracker.Update(devices, "pci-0", snapshot, null, null, null, null);
+        Assert.Empty(result.EligibleInstanceIds);
     }
 
     [Fact]
-    public void Tracker_NeverReadableDevice_RemainsHidden()
+    public void Tracker_LoadBelowThreshold_DoesNotQualify()
     {
-        var tracker = new GpuExtrasTracker();
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
         var devices = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
             Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
         };
-        var snapshot = Snapshot(gpus: devices); // No readings at all
+        var snapshot = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu1", "LoadPercent", 3.0) });
 
-        var result = tracker.Update(devices, "gpu0", snapshot, null, null, null, null);
-
-        // Neither device ever had telemetry, so no extras.
+        var result = tracker.Update(devices, "pci-0", snapshot, null, null, null, null);
         Assert.Empty(result.EligibleInstanceIds);
     }
 
     [Fact]
-    public void Tracker_MemoryOnlyTelemetry_DoesNotQualifyExtra()
+    public void Tracker_TemperatureOnly_DoesNotQualify()
     {
-        var tracker = new GpuExtrasTracker();
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
+        var devices = new[]
+        {
+            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
+            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
+        };
+        var snapshot = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu1", "TemperatureC", 55.0, "°C") });
+
+        var result = tracker.Update(devices, "pci-0", snapshot, null, null, null, null);
+        Assert.Empty(result.EligibleInstanceIds);
+    }
+
+    [Fact]
+    public void Tracker_MemoryOnly_DoesNotQualify()
+    {
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
         var devices = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
@@ -146,392 +171,60 @@ public class GpuExtrasTrackerTests
                 Read("gpu1", "VramTotalBytes", 4_000_000_000.0, "B"),
             });
 
-        var result = tracker.Update(devices, "gpu0", snapshot, null, null, null, null);
-
-        // Memory-only telemetry does not qualify for extra row (extra row shows load/temp only).
+        var result = tracker.Update(devices, "pci-0", snapshot, null, null, null, null);
         Assert.Empty(result.EligibleInstanceIds);
     }
 
     [Fact]
-    public void Tracker_Failure1_RetainsRow()
+    public void Tracker_DiscreteGpu_LowLoad_DoesNotQualify()
     {
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
-            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
-        };
-
-        // Cycle 1: gpu1 has load, qualifies.
-        var snapshot1 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
-        var r1 = tracker.Update(devices, "gpu0", snapshot1, null, null, null, null);
-        Assert.Contains("pci-1", r1.EligibleInstanceIds);
-
-        // Cycle 2: gpu1 loses telemetry (failure 1).
-        var snapshot2 = Snapshot(gpus: devices);
-        var r2 = tracker.Update(devices, "gpu0", snapshot2, null, null, null, null);
-        Assert.Contains("pci-1", r2.EligibleInstanceIds); // Retained through failure 1
-    }
-
-    [Fact]
-    public void Tracker_Failure2_RetainsRow()
-    {
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
-            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
-        };
-
-        var snapshot1 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
-        tracker.Update(devices, "gpu0", snapshot1, null, null, null, null);
-
-        // Failure 1
-        tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-
-        // Failure 2
-        var r2 = tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-        Assert.Contains("pci-1", r2.EligibleInstanceIds);
-    }
-
-    [Fact]
-    public void Tracker_Failure3_RetainsRow()
-    {
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
-            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
-        };
-
-        var snapshot1 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
-        tracker.Update(devices, "gpu0", snapshot1, null, null, null, null);
-
-        // Failures 1, 2
-        for (int i = 0; i < 2; i++)
-        {
-            tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-        }
-
-        // Failure 3
-        var r3 = tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-        Assert.Contains("pci-1", r3.EligibleInstanceIds); // Still retained through failure 3
-    }
-
-    [Fact]
-    public void Tracker_Failure4_RemovesRow()
-    {
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
-            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
-        };
-
-        var snapshot1 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
-        tracker.Update(devices, "gpu0", snapshot1, null, null, null, null);
-
-        // Failures 1, 2, 3
-        for (int i = 0; i < 3; i++)
-        {
-            tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-        }
-
-        // Failure 4 - should be removed.
-        var r4 = tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-        Assert.DoesNotContain("pci-1", r4.EligibleInstanceIds); // Removed on failure 4
-    }
-
-    [Fact]
-    public void Tracker_Recovery_ResetsFailureStreak()
-    {
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
-            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
-        };
-
-        // Cycle 1: gpu1 has load.
-        var snapshot1 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
-        tracker.Update(devices, "gpu0", snapshot1, null, null, null, null);
-
-        // Cycle 2: failure 1.
-        tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-
-        // Cycle 3: recovery - gpu1 has load again.
-        var snapshot3 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 15.0) });
-        var r3 = tracker.Update(devices, "gpu0", snapshot3, null, null, null, null);
-        Assert.Contains("pci-1", r3.EligibleInstanceIds);
-
-        // Cycle 4: failure again - should be failure 1 of new streak.
-        tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-        var r4 = tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-        Assert.Contains("pci-1", r4.EligibleInstanceIds); // Still retained (failure 1 of new streak)
-
-        // Cycle 5: failure 2.
-        tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-
-        // Cycle 6: failure 3.
-        tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-
-        // Cycle 7: failure 4 - should be removed now.
-        var r7 = tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-        Assert.DoesNotContain("pci-1", r7.EligibleInstanceIds);
-    }
-
-    [Fact]
-    public void Tracker_DeviceDisappearance_RemovesImmediately()
-    {
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
-            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
-        };
-
-        // Cycle 1: gpu1 has load, qualifies.
-        var snapshot1 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
-        tracker.Update(devices, "gpu0", snapshot1, null, null, null, null);
-
-        // Cycle 2: gpu1 removed from system.
-        var devicesAfterRemoval = new[] { Gpu("gpu0", "pci-0", GpuIntegration.Discrete) };
-        var snapshot2 = Snapshot(gpus: devicesAfterRemoval);
-        var r2 = tracker.Update(devicesAfterRemoval, "gpu0", snapshot2, null, null, null, null);
-
-        // Device gone -> removed immediately.
-        Assert.Empty(r2.EligibleInstanceIds);
-    }
-
-    [Fact]
-    public void Tracker_Reappearance_StartsNewHistory()
-    {
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
-            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
-        };
-
-        // Cycle 1: gpu1 has load, qualifies.
-        var snapshot1 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
-        tracker.Update(devices, "gpu0", snapshot1, null, null, null, null);
-
-        // Cycle 2: gpu1 removed.
-        var devicesNoGpu1 = new[] { Gpu("gpu0", "pci-0", GpuIntegration.Discrete) };
-        tracker.Update(devicesNoGpu1, "gpu0", Snapshot(gpus: devicesNoGpu1), null, null, null, null);
-
-        // Cycle 3: gpu1 reappears (same instance id) but NO telemetry.
-        var devicesAgain = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
-            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
-        };
-        var snapshot3 = Snapshot(gpus: devicesAgain);
-        var r3 = tracker.Update(devicesAgain, "gpu0", snapshot3, null, null, null, null);
-
-        // Reappearance starts fresh: no telemetry means not qualified.
-        Assert.Empty(r3.EligibleInstanceIds);
-
-        // Cycle 4: gpu1 gets telemetry now.
-        var snapshot4 = Snapshot(
-            gpus: devicesAgain,
-            readings: new[] { Read("gpu1", "LoadPercent", 5.0) });
-        var r4 = tracker.Update(devicesAgain, "gpu0", snapshot4, null, null, null, null);
-        Assert.Contains("pci-1", r4.EligibleInstanceIds); // Now qualifies fresh
-    }
-
-    [Fact]
-    public void Tracker_IdenticallyNamedGpus_SeparateHistories()
-    {
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete, "NVIDIA RTX 3080"),
-            Gpu("gpu1", "pci-1", GpuIntegration.Discrete, "NVIDIA RTX 3080"), // Same name, different instance
-            Gpu("gpu2", "pci-2", GpuIntegration.Discrete),
-        };
-
-        // Cycle 1: gpu1 has load, gpu2 does not.
-        var snapshot1 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
-        tracker.Update(devices, "gpu0", snapshot1, null, null, null, null);
-
-        // Cycle 2: both gpu1 and gpu2 lose telemetry.
-        tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-        tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-
-        // Cycle 3: gpu1 gets telemetry back, gpu2 does not.
-        var snapshot3 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 5.0) });
-        var r3 = tracker.Update(devices, "gpu0", snapshot3, null, null, null, null);
-
-        // gpu1 qualifies (recovery resets), gpu2 never qualified.
-        Assert.Contains("pci-1", r3.EligibleInstanceIds);
-        Assert.DoesNotContain("pci-2", r3.EligibleInstanceIds);
-    }
-
-    [Fact]
-    public void Tracker_PrimaryExcludedFromExtras()
-    {
-        var tracker = new GpuExtrasTracker();
+        // Idle suppression applies to all devices: load < 5% does not qualify.
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
         var devices = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
             Gpu("gpu1", "pci-1", GpuIntegration.Discrete),
         };
-
-        // Cycle 1: both have load, gpu0 is primary.
-        var snapshot1 = Snapshot(
+        var snapshot = Snapshot(
             gpus: devices,
-            readings: new[] { Read("gpu0", "LoadPercent", 10.0), Read("gpu1", "LoadPercent", 5.0) });
-        var r1 = tracker.Update(devices, "pci-0", snapshot1, null, null, null, null);
-        Assert.Contains("pci-1", r1.EligibleInstanceIds);
-        Assert.DoesNotContain("pci-0", r1.EligibleInstanceIds);
+            readings: new[] { Read("gpu1", "LoadPercent", 3.0) });
 
-        // Cycle 2: gpu0 loses telemetry, gpu1 becomes primary.
-        var snapshot2 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 5.0) });
-        var r2 = tracker.Update(devices, "pci-1", snapshot2, null, null, null, null);
-        // gpu0 is now secondary but never qualified as secondary.
-        Assert.Empty(r2.EligibleInstanceIds);
-
-        // Cycle 3: gpu0 gets telemetry as secondary.
-        var snapshot3 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 5.0), Read("gpu0", "LoadPercent", 8.0) });
-        var r3 = tracker.Update(devices, "pci-1", snapshot3, null, null, null, null);
-        Assert.Contains("pci-0", r3.EligibleInstanceIds); // gpu0 qualifies fresh as secondary
+        var result = tracker.Update(devices, "pci-0", snapshot, null, null, null, null);
+        Assert.Empty(result.EligibleInstanceIds);
     }
 
+    // ------------------------------------------------------------------
+    // 6-second time-based retention (not cycle-based)
+    // ------------------------------------------------------------------
+
     [Fact]
-    public void Tracker_RepeatedPresentation_DoesNotConsumeGrace()
+    public void Tracker_Within6Seconds_RetainsRow()
     {
-        // This test documents that the tracker advances on each Update() call
-        // (each completed collection cycle), not on presentation calls.
-        // Multiple presentations of the same snapshot would call Present() multiple
-        // times but Update() only once per cycle.
-        var tracker = new GpuExtrasTracker();
+        var time = new FakeTimeProvider();
+        var tracker = new GpuExtrasTracker(6, time);
         var devices = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
             Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
         };
 
-        // Cycle 1: gpu1 qualifies.
-        var snapshot1 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
-        tracker.Update(devices, "gpu0", snapshot1, null, null, null, null);
-
-        // Cycle 2: no telemetry (failure 1).
-        var snapshot2 = Snapshot(gpus: devices);
-        var r2 = tracker.Update(devices, "gpu0", snapshot2, null, null, null, null);
-
-        // The tracker advances on each Update() call.
-        // If the presenter called Present() multiple times with the same snapshot,
-        // it wouldn't call Update() again - so no additional failure.
-        // This test confirms the current failure count after one failed cycle.
-        Assert.Contains("pci-1", r2.EligibleInstanceIds);
-        Assert.Equal(1, tracker.GetTrackingState()["pci-1"].ConsecutiveFailures);
-    }
-
-    [Fact]
-    public void Tracker_AbortedCollection_DoesNotAdvanceFailures()
-    {
-        // This test documents the contract: only completed Update() calls
-        // advance the failure count. An aborted collection (no Update call)
-        // does not consume grace.
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
-            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
-        };
-
-        // Cycle 1: gpu1 qualifies.
+        // Qualify at T=0
         var snapshot1 = Snapshot(
             gpus: devices,
             readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
         tracker.Update(devices, "pci-0", snapshot1, null, null, null, null);
 
-        // Cycle 2: no telemetry (failure 1).
-        var snapshot2 = Snapshot(gpus: devices);
-        tracker.Update(devices, "pci-0", snapshot2, null, null, null, null);
-
-        // Cycle 3: no telemetry (failure 2).
-        tracker.Update(devices, "pci-0", snapshot2, null, null, null, null);
-
-        // If an aborted collection happened here (no Update call),
-        // the failure count would still be 2 on the next real collection.
-        // This is a contract test - the tracker cannot know about aborted
-        // work; it only advances on explicit Update calls.
-
-        // Cycle 4: no telemetry (failure 3 - still within grace of 3).
-        var r4 = tracker.Update(devices, "pci-0", snapshot2, null, null, null, null);
-        Assert.Contains("pci-1", r4.EligibleInstanceIds); // Still retained (failure 3 <= grace 3)
-
-        // Cycle 5: failure 4 - removed.
-        var r5 = tracker.Update(devices, "pci-0", snapshot2, null, null, null, null);
-        Assert.DoesNotContain("pci-1", r5.EligibleInstanceIds);
+        // Advance 3 seconds, no telemetry
+        time.Advance(TimeSpan.FromSeconds(3));
+        var r2 = tracker.Update(devices, "pci-0", Snapshot(gpus: devices), null, null, null, null);
+        Assert.Contains("pci-1", r2.EligibleInstanceIds); // Within 6s window
     }
 
     [Fact]
-    public void Tracker_RetainedRow_DoesNotRefreshFailedMeasurements()
+    public void Tracker_Exactly6Seconds_StillRetained()
     {
-        // This test documents the requirement: grace preserves row identity,
-        // not measurement freshness. Failed readings remain N/A/stale.
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
-            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
-        };
-
-        // Cycle 1: gpu1 has load, qualifies.
-        var snapshot1 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
-        tracker.Update(devices, "gpu0", snapshot1, null, null, null, null);
-
-        // Cycle 2: gpu1 has failed temperature reading, no load.
-        var failedTemp = Measurement.Failed("test");
-        var snapshot2 = Snapshot(
-            gpus: devices,
-            readings: new[]
-            {
-                new DeviceReading { DeviceId = "gpu1", Metric = "TemperatureC", Measurement = failedTemp },
-            });
-        var r2 = tracker.Update(devices, "gpu0", snapshot2, null, null, null, null);
-
-        // Row retained (failure 1), but temperature reading is failed.
-        // The presenter will show N/A for temperature, not a stale value.
-        Assert.Contains("pci-1", r2.EligibleInstanceIds);
-    }
-
-    [Fact]
-    public void Tracker_CustomGraceCycles_RespectsConfiguration()
-    {
-        var tracker = new GpuExtrasTracker(2, TimeProvider.System); // Only 2 grace cycles
+        var time = new FakeTimeProvider();
+        var tracker = new GpuExtrasTracker(6, time);
         var devices = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
@@ -541,293 +234,244 @@ public class GpuExtrasTrackerTests
         var snapshot1 = Snapshot(
             gpus: devices,
             readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
-        tracker.Update(devices, "gpu0", snapshot1, null, null, null, null);
+        tracker.Update(devices, "pci-0", snapshot1, null, null, null, null);
 
-        // Failure 1
-        tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-        // Failure 2 (last grace cycle)
-        var r2 = tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-        Assert.Contains("pci-1", r2.EligibleInstanceIds);
-
-        // Failure 3 (exhausted) - removed.
-        var r3 = tracker.Update(devices, "gpu0", Snapshot(gpus: devices), null, null, null, null);
-        Assert.DoesNotContain("pci-1", r3.EligibleInstanceIds);
+        time.Advance(TimeSpan.FromSeconds(6));
+        var r2 = tracker.Update(devices, "pci-0", Snapshot(gpus: devices), null, null, null, null);
+        Assert.Contains("pci-1", r2.EligibleInstanceIds); // Still within <= 6s
     }
 
     [Fact]
-    public void Tracker_ExplicitPrimaryDeviceId_ExcludesCorrectDevice()
+    public void Tracker_Over6Seconds_RemovesRow()
     {
-        var tracker = new GpuExtrasTracker();
+        var time = new FakeTimeProvider();
+        var tracker = new GpuExtrasTracker(6, time);
+        var devices = new[]
+        {
+            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
+            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
+        };
+
+        var snapshot1 = Snapshot(
+            gpus: devices,
+            readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
+        tracker.Update(devices, "pci-0", snapshot1, null, null, null, null);
+
+        time.Advance(TimeSpan.FromSeconds(6.1));
+        var r2 = tracker.Update(devices, "pci-0", Snapshot(gpus: devices), null, null, null, null);
+        Assert.Empty(r2.EligibleInstanceIds); // Beyond 6s window
+    }
+
+    [Fact]
+    public void Tracker_NewQualifyingLoad_RefreshesWindow()
+    {
+        var time = new FakeTimeProvider();
+        var tracker = new GpuExtrasTracker(6, time);
+        var devices = new[]
+        {
+            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
+            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
+        };
+
+        var s1 = Snapshot(gpus: devices, readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
+        tracker.Update(devices, "pci-0", s1, null, null, null, null);
+
+        time.Advance(TimeSpan.FromSeconds(5));
+        // At 5s, another qualifying load refreshes the window
+        var s2 = Snapshot(gpus: devices, readings: new[] { Read("gpu1", "LoadPercent", 12.0) });
+        tracker.Update(devices, "pci-0", s2, null, null, null, null);
+
+        // Now advance another 5s from the refresh (total 10s from original)
+        time.Advance(TimeSpan.FromSeconds(5));
+        var r3 = tracker.Update(devices, "pci-0", Snapshot(gpus: devices), null, null, null, null);
+        Assert.Contains("pci-1", r3.EligibleInstanceIds); // Window refreshed at 5s
+
+        time.Advance(TimeSpan.FromSeconds(1));
+        var r4 = tracker.Update(devices, "pci-0", Snapshot(gpus: devices), null, null, null, null);
+        Assert.Empty(r4.EligibleInstanceIds); // 6s after refresh = 11s total
+    }
+
+    [Fact]
+    public void Tracker_WithinWindow_NoTelemetry_DoesNotRefreshWindow()
+    {
+        // Temperature/memory must NOT refresh LastQualifiedAt
+        var time = new FakeTimeProvider();
+        var tracker = new GpuExtrasTracker(6, time);
+        var devices = new[]
+        {
+            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
+            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
+        };
+
+        var s1 = Snapshot(gpus: devices, readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
+        tracker.Update(devices, "pci-0", s1, null, null, null, null);
+
+        time.Advance(TimeSpan.FromSeconds(3));
+        // Temperature reading only — should NOT extend retention window
+        var s2 = Snapshot(gpus: devices, readings: new[] { Read("gpu1", "TemperatureC", 45.0, "°C") });
+        tracker.Update(devices, "pci-0", s2, null, null, null, null);
+
+        // Advance to 6.5s after ORIGINAL qualification (not refreshed)
+        time.Advance(TimeSpan.FromSeconds(3.5));
+        var r3 = tracker.Update(devices, "pci-0", Snapshot(gpus: devices), null, null, null, null);
+        Assert.Empty(r3.EligibleInstanceIds); // Window not refreshed by temp
+    }
+
+    [Fact]
+    public void Tracker_NeverQualified_NoRetentionWindow()
+    {
+        var time = new FakeTimeProvider();
+        var tracker = new GpuExtrasTracker(6, time);
+        var devices = new[]
+        {
+            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
+            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
+        };
+
+        // No telemetry ever — should never be eligible
+        var result = tracker.Update(devices, "pci-0", Snapshot(gpus: devices), null, null, null, null);
+        Assert.Empty(result.EligibleInstanceIds);
+    }
+
+    // ------------------------------------------------------------------
+    // Role transition and identity
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Tracker_PrimaryExcluded_FromExtras()
+    {
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
         var devices = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
             Gpu("gpu1", "pci-1", GpuIntegration.Discrete),
         };
-
-        // Primary is gpu1 (by instance id).
         var snapshot = Snapshot(
             gpus: devices,
-            readings: new[] { Read("gpu0", "LoadPercent", 10.0), Read("gpu1", "LoadPercent", 5.0) });
+            readings: new[]
+            {
+                Read("gpu0", "LoadPercent", 10.0),
+                Read("gpu1", "LoadPercent", 5.0),
+            });
         var result = tracker.Update(devices, "pci-1", snapshot, null, null, null, null);
-
-        // gpu0 qualifies as extra (has telemetry, not primary).
         Assert.Contains("pci-0", result.EligibleInstanceIds);
         Assert.DoesNotContain("pci-1", result.EligibleInstanceIds);
     }
 
     [Fact]
-    public void Tracker_PrimaryByInstanceId_ExcludesCorrectDevice()
+    public void Tracker_DeviceDisappearance_RemovesImmediately()
     {
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
-            Gpu("gpu1", "pci-1", GpuIntegration.Discrete),
-        };
-
-        // Primary is gpu0 (by instance id).
-        var snapshot = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu0", "LoadPercent", 10.0), Read("gpu1", "LoadPercent", 5.0) });
-        var result = tracker.Update(devices, "pci-0", snapshot, null, null, null, null);
-
-        // gpu1 qualifies as extra.
-        Assert.Contains("pci-1", result.EligibleInstanceIds);
-        Assert.DoesNotContain("pci-0", result.EligibleInstanceIds);
-    }
-
-    [Fact]
-    public void Tracker_TemperatureTelemetry_Qualifies()
-    {
-        var tracker = new GpuExtrasTracker();
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
         var devices = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
             Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
         };
-        var snapshot = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu1", "TemperatureC", 55.0, "°C") });
+        var s1 = Snapshot(gpus: devices, readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
+        tracker.Update(devices, "pci-0", s1, null, null, null, null);
 
-        var result = tracker.Update(devices, "gpu0", snapshot, null, null, null, null);
-
-        Assert.Contains("pci-1", result.EligibleInstanceIds);
+        var devicesAfter = new[] { Gpu("gpu0", "pci-0", GpuIntegration.Discrete) };
+        var r2 = tracker.Update(devicesAfter, "pci-0", Snapshot(gpus: devicesAfter), null, null, null, null);
+        Assert.Empty(r2.EligibleInstanceIds);
     }
 
     [Fact]
-    public void Tracker_ScalarFallbackForDevice_Qualifies()
+    public void Tracker_Reappearance_RequiresFreshQualification()
     {
-        var tracker = new GpuExtrasTracker();
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
         var devices = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
             Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
         };
-        var snapshot = Snapshot(
-            gpus: devices,
-            gpuLoadPercent: Measurement.AvailableValue(10.0, "%", "nvidia-smi"),
-            gpuLoadDeviceId: "gpu1");
+        var s1 = Snapshot(gpus: devices, readings: new[] { Read("gpu1", "LoadPercent", 10.0) });
+        tracker.Update(devices, "pci-0", s1, null, null, null, null);
 
-        var result = tracker.Update(devices, "gpu0", snapshot,
-            snapshot.GpuLoadPercent, snapshot.GpuLoadDeviceId,
-            snapshot.GpuTemperatureC, snapshot.GpuTemperatureDeviceId);
+        var noGpu1 = new[] { Gpu("gpu0", "pci-0", GpuIntegration.Discrete) };
+        tracker.Update(noGpu1, "pci-0", Snapshot(gpus: noGpu1), null, null, null, null);
 
-        // Scalar fallback attributed to gpu1 qualifies it.
-        Assert.Contains("pci-1", result.EligibleInstanceIds);
-    }
-
-    [Fact]
-    public void Tracker_UnattributedScalar_DoesNotQualify()
-    {
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
+        var again = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
             Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
         };
-        var snapshot = Snapshot(
-            gpus: devices,
-            gpuLoadPercent: Measurement.AvailableValue(10.0, "%", "nvidia-smi"),
-            gpuLoadDeviceId: null); // Unattributed
+        // Reappearance without telemetry — should NOT qualify
+        var r3 = tracker.Update(again, "pci-0", Snapshot(gpus: again), null, null, null, null);
+        Assert.Empty(r3.EligibleInstanceIds);
 
-        var result = tracker.Update(devices, "gpu0", snapshot,
-            snapshot.GpuLoadPercent, snapshot.GpuLoadDeviceId,
-            snapshot.GpuTemperatureC, snapshot.GpuTemperatureDeviceId);
-
-        Assert.Empty(result.EligibleInstanceIds);
+        // Fresh qualification
+        var s4 = Snapshot(gpus: again, readings: new[] { Read("gpu1", "LoadPercent", 5.0) });
+        var r4 = tracker.Update(again, "pci-0", s4, null, null, null, null);
+        Assert.Contains("pci-1", r4.EligibleInstanceIds);
     }
 
-    [Fact]
-    public void Tracker_ScalarForDifferentDevice_DoesNotQualify()
-    {
-        var tracker = new GpuExtrasTracker();
-        var devices = new[]
-        {
-            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
-            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
-        };
-        var snapshot = Snapshot(
-            gpus: devices,
-            gpuLoadPercent: Measurement.AvailableValue(10.0, "%", "nvidia-smi"),
-            gpuLoadDeviceId: "gpu0"); // Scalar for primary, not secondary
-
-        var result = tracker.Update(devices, "pci-0", snapshot,
-            snapshot.GpuLoadPercent, snapshot.GpuLoadDeviceId,
-            snapshot.GpuTemperatureC, snapshot.GpuTemperatureDeviceId);
-
-        Assert.Empty(result.EligibleInstanceIds);
-    }
-
-    /// <summary>
-    /// Verifies that when a GPU transitions from secondary -> primary -> secondary,
-    /// its grace failure history is reset. The role transition should not carry
-    /// over consecutive failures from the previous secondary tenure.
-    /// </summary>
     [Fact]
     public void Tracker_SecondaryToPrimaryToSecondary_ResetsHistory()
     {
-        var tracker = new GpuExtrasTracker();
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
         var devices = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
             Gpu("gpu1", "pci-1", GpuIntegration.Discrete),
         };
 
-        // Cycle 1: gpu0 primary, gpu1 secondary with telemetry -> gpu1 qualifies
-        var snapshot1 = Snapshot(
+        // Cycle 1: primary gpu0, secondary gpu1 with telemetry -> qualifies
+        var s1 = Snapshot(
             gpus: devices,
             readings: new[] { Read("gpu0", "LoadPercent", 10.0), Read("gpu1", "LoadPercent", 5.0) });
-        var r1 = tracker.Update(devices, "pci-0", snapshot1, null, null, null, null);
-        Assert.Contains("pci-1", r1.EligibleInstanceIds);
+        tracker.Update(devices, "pci-0", s1, null, null, null, null);
 
-        // Cycle 2: gpu1 loses telemetry (failure 1 as secondary)
-        var snapshot2 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu0", "LoadPercent", 10.0) });
-        var r2 = tracker.Update(devices, "pci-0", snapshot2, null, null, null, null);
-        Assert.Contains("pci-1", r2.EligibleInstanceIds); // Still retained (failure 1)
-        Assert.Equal(1, tracker.GetTrackingState()["pci-1"].ConsecutiveFailures);
-
-        // Cycle 3: gpu1 loses telemetry (failure 2 as secondary)
-        var snapshot3 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu0", "LoadPercent", 10.0) });
-        var r3 = tracker.Update(devices, "pci-0", snapshot3, null, null, null, null);
-        Assert.Contains("pci-1", r3.EligibleInstanceIds); // Still retained (failure 2)
-        Assert.Equal(2, tracker.GetTrackingState()["pci-1"].ConsecutiveFailures);
-
-        // Cycle 4: gpu0 loses telemetry, gpu1 becomes primary
-        // gpu1 is now primary, so it's excluded from extras
-        var snapshot4 = Snapshot(
+        // Cycle 4: gpu1 becomes primary, excluded from extras
+        var s4 = Snapshot(
             gpus: devices,
             readings: new[] { Read("gpu1", "LoadPercent", 5.0) });
-        var r4 = tracker.Update(devices, "pci-1", snapshot4, null, null, null, null);
-        // gpu1 is primary, so no extras
-        Assert.Empty(r4.EligibleInstanceIds);
-        // But gpu1's tracking state should still exist with 2 failures
+        tracker.Update(devices, "pci-1", s4, null, null, null, null);
 
-        // Cycle 5: gpu0 gets telemetry back, gpu1 becomes secondary AGAIN
-        // gpu1 should qualify FRESH (not carry over the 2 failures from when it was secondary before)
-        var snapshot5 = Snapshot(
+        // Cycle 5: gpu0 primary again, gpu1 secondary with telemetry -> fresh qualification
+        var s5 = Snapshot(
             gpus: devices,
             readings: new[] { Read("gpu0", "LoadPercent", 8.0), Read("gpu1", "LoadPercent", 5.0) });
-        var r5 = tracker.Update(devices, "pci-0", snapshot5, null, null, null, null);
-
-        // BUG: The tracker currently carries over the failure count!
-        // Expected: gpu1 should appear as extra (fresh qualification)
-        // Actual (buggy): gpu1 might not appear because it has 2 prior failures
-        var stateAfterSecondary = tracker.GetTrackingState()["pci-1"];
-        System.Console.WriteLine($"State after cycle 5: HasEverQualified={stateAfterSecondary.HasEverQualified}, ConsecutiveFailures={stateAfterSecondary.ConsecutiveFailures}");
-        Assert.Contains("pci-1", r5.EligibleInstanceIds); // Should qualify fresh
-        // The key assertion: failure count should be RESET to 0, not remain at 2
-        Assert.Equal(0, stateAfterSecondary.ConsecutiveFailures);
+        var r5 = tracker.Update(devices, "pci-0", s5, null, null, null, null);
+        Assert.Contains("pci-1", r5.EligibleInstanceIds);
     }
 
-    /// <summary>
-    /// Verifies that when a GPU transitions from secondary -> primary -> secondary
-    /// WITHOUT telemetry in the new secondary role, it does NOT carry over the
-    /// failure count from the previous secondary tenure. A device becoming secondary
-    /// should start fresh - it only accumulates failures if it HAS qualified as
-    /// secondary in the current tenure.
-    /// </summary>
     [Fact]
-    public void Tracker_SecondaryToPrimaryToSecondary_NoTelemetry_DoesNotCarryOverFailures()
+    public void Tracker_SecondaryToPrimaryToSecondary_NoTelemetry_DoesNotCarryOver()
     {
-        var tracker = new GpuExtrasTracker();
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
         var devices = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
             Gpu("gpu1", "pci-1", GpuIntegration.Discrete),
         };
-
-        // Cycle 1: gpu0 primary, gpu1 secondary with telemetry -> gpu1 qualifies
-        var snapshot1 = Snapshot(
+        var s1 = Snapshot(
             gpus: devices,
             readings: new[] { Read("gpu0", "LoadPercent", 10.0), Read("gpu1", "LoadPercent", 5.0) });
-        tracker.Update(devices, "pci-0", snapshot1, null, null, null, null);
+        tracker.Update(devices, "pci-0", s1, null, null, null, null);
 
-        // Cycle 2: gpu1 loses telemetry (failure 1 as secondary)
-        var snapshot2 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu0", "LoadPercent", 10.0) });
-        tracker.Update(devices, "pci-0", snapshot2, null, null, null, null);
-        Assert.Equal(1, tracker.GetTrackingState()["pci-1"].ConsecutiveFailures);
-
-        // Cycle 3: gpu1 loses telemetry (failure 2 as secondary)
-        var snapshot3 = Snapshot(
-            gpus: devices,
-            readings: new[] { Read("gpu0", "LoadPercent", 10.0) });
-        tracker.Update(devices, "pci-0", snapshot3, null, null, null, null);
-        Assert.Equal(2, tracker.GetTrackingState()["pci-1"].ConsecutiveFailures);
-
-        // Cycle 4: gpu0 loses telemetry, gpu1 becomes primary
-        var snapshot4 = Snapshot(
+        // gpu1 becomes primary
+        var sPrimary = Snapshot(
             gpus: devices,
             readings: new[] { Read("gpu1", "LoadPercent", 5.0) });
-        tracker.Update(devices, "pci-1", snapshot4, null, null, null, null);
-        // gpu1 is primary, so no extras
-        var stateAfterPrimary = tracker.GetTrackingState()["pci-1"];
-        Assert.Equal(2, stateAfterPrimary.ConsecutiveFailures);
-        Assert.True(stateAfterPrimary.HasEverQualified);
+        tracker.Update(devices, "pci-1", sPrimary, null, null, null, null);
 
-        // Cycle 5: gpu0 gets telemetry back, gpu1 becomes secondary AGAIN
-        // BUT gpu1 has NO telemetry this cycle
-        var snapshot5 = Snapshot(
+        // Back to secondary with no telemetry — should NOT be eligible
+        var s5 = Snapshot(
             gpus: devices,
-            readings: new[] { Read("gpu0", "LoadPercent", 8.0) }); // Only gpu0 has telemetry
-        var r5 = tracker.Update(devices, "pci-0", snapshot5, null, null, null, null);
-
-        // EXPECTED BEHAVIOR: gpu1 should NOT appear as extra because:
-        // 1. It never qualified as secondary in this new tenure (no telemetry in cycle 5)
-        // 2. The 2 failures from the PREVIOUS secondary tenure should NOT carry over
-        // 3. Since HasEverQualified is true (from previous tenure) but failure count
-        //    should be reset, the behavior depends on the exact rule.
-        //
-        // According to the grace policy: "A device transitioning from primary to
-        // secondary starts with a fresh eligibility history (it must qualify on its
-        // own displayed telemetry)."
-        // This means HasEverQualified should be RESET to false when transitioning
-        // from primary to secondary.
-        var stateAfterSecondary = tracker.GetTrackingState()["pci-1"];
-        System.Console.WriteLine($"State after cycle 5: HasEverQualified={stateAfterSecondary.HasEverQualified}, ConsecutiveFailures={stateAfterSecondary.ConsecutiveFailures}");
-
-        // Should not appear as extra (no telemetry in new tenure)
-        Assert.DoesNotContain("pci-1", r5.EligibleInstanceIds);
-        // HasEverQualified should be false (fresh start)
-        Assert.False(stateAfterSecondary.HasEverQualified);
-        // ConsecutiveFailures should be 0
-        Assert.Equal(0, stateAfterSecondary.ConsecutiveFailures);
+            readings: new[] { Read("gpu0", "LoadPercent", 8.0) });
+        var r5 = tracker.Update(devices, "pci-0", s5, null, null, null, null);
+        Assert.Empty(r5.EligibleInstanceIds);
     }
 
-    /// <summary>
-    /// Verifies that when some secondary GPUs have current telemetry and others
-    /// are in grace period (no current telemetry), ALL eligible devices are
-    /// returned in the correct order: telemetry devices first, then grace devices.
-    /// </summary>
+    // ------------------------------------------------------------------
+    // Ordering with telemetry and grace devices
+    // ------------------------------------------------------------------
+
     [Fact]
-    public void Tracker_ReadableAndGraceDevices_CoexistAndAreOrderedCorrectly()
+    public void Tracker_ReadableAndGrace_OrderedCorrectly()
     {
-        var tracker = new GpuExtrasTracker();
+        var time = new FakeTimeProvider();
+        var tracker = new GpuExtrasTracker(6, time);
         var devices = new[]
         {
             Gpu("gpu0", "pci-0", GpuIntegration.Discrete, "Primary GPU"),
@@ -835,52 +479,69 @@ public class GpuExtrasTrackerTests
             Gpu("gpu2", "pci-2", GpuIntegration.Discrete, "Secondary In Grace"),
         };
 
-        // Cycle 1: All three have telemetry, gpu0 is primary
-        var snapshot1 = Snapshot(
+        var s1 = Snapshot(
             gpus: devices,
             readings: new[]
             {
                 Read("gpu0", "LoadPercent", 10.0),
                 Read("gpu1", "LoadPercent", 5.0),
-                Read("gpu2", "LoadPercent", 3.0)
+                Read("gpu2", "LoadPercent", 3.0),
             });
-        var r1 = tracker.Update(devices, "pci-0", snapshot1, null, null, null, null);
-        Assert.Equal(2, r1.EligibleInstanceIds.Count);
-        Assert.Contains("pci-1", r1.EligibleInstanceIds);
-        Assert.Contains("pci-2", r1.EligibleInstanceIds);
+        tracker.Update(devices, "pci-0", s1, null, null, null, null);
 
-        // Cycle 2: gpu1 keeps telemetry, gpu2 loses it (failure 1)
-        var snapshot2 = Snapshot(
+        // Remove telemetry from gpu2
+        var s2 = Snapshot(
             gpus: devices,
             readings: new[]
             {
                 Read("gpu0", "LoadPercent", 10.0),
-                Read("gpu1", "LoadPercent", 5.0)
+                Read("gpu1", "LoadPercent", 5.0),
             });
-        var r2 = tracker.Update(devices, "pci-0", snapshot2, null, null, null, null);
-
-        // BOTH should appear: gpu1 (has telemetry) first, gpu2 (grace) second
+        var r2 = tracker.Update(devices, "pci-0", s2, null, null, null, null);
         Assert.Equal(2, r2.EligibleInstanceIds.Count);
-        Assert.Contains("pci-1", r2.EligibleInstanceIds);
-        Assert.Contains("pci-2", r2.EligibleInstanceIds);
+        Assert.Equal("pci-1", r2.EligibleInstanceIds[0]); // telemetry first
+        Assert.Equal("pci-2", r2.EligibleInstanceIds[1]); // grace second
+    }
 
-        // gpu1 should come FIRST (has current telemetry)
-        Assert.Equal("pci-1", r2.EligibleInstanceIds[0]);
-        Assert.Equal("pci-2", r2.EligibleInstanceIds[1]);
+    // ------------------------------------------------------------------
+    // Scalar fallback
+    // ------------------------------------------------------------------
 
-        // Cycle 3: gpu1 keeps telemetry, gpu2 still no telemetry (failure 2)
-        var snapshot3 = Snapshot(
+    [Fact]
+    public void Tracker_ScalarFallback_QualifiesWhenAttributed()
+    {
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
+        var devices = new[]
+        {
+            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
+            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
+        };
+        var snapshot = Snapshot(
             gpus: devices,
-            readings: new[]
-            {
-                Read("gpu0", "LoadPercent", 10.0),
-                Read("gpu1", "LoadPercent", 5.0)
-            });
-        var r3 = tracker.Update(devices, "pci-0", snapshot3, null, null, null, null);
+            gpuLoadPercent: Measurement.AvailableValue(10.0, "%", "test"),
+            gpuLoadDeviceId: "gpu1");
+        var result = tracker.Update(devices, "pci-0", snapshot,
+            snapshot.GpuLoadPercent, snapshot.GpuLoadDeviceId,
+            snapshot.GpuTemperatureC, snapshot.GpuTemperatureDeviceId);
+        Assert.Contains("pci-1", result.EligibleInstanceIds);
+    }
 
-        // BOTH should still appear
-        Assert.Equal(2, r3.EligibleInstanceIds.Count);
-        Assert.Equal("pci-1", r3.EligibleInstanceIds[0]); // gpu1 has telemetry, comes first
-        Assert.Equal("pci-2", r3.EligibleInstanceIds[1]); // gpu2 in grace, comes second
+    [Fact]
+    public void Tracker_UnattributedScalar_DoesNotQualify()
+    {
+        var tracker = new GpuExtrasTracker(6, new FakeTimeProvider());
+        var devices = new[]
+        {
+            Gpu("gpu0", "pci-0", GpuIntegration.Discrete),
+            Gpu("gpu1", "pci-1", GpuIntegration.Integrated),
+        };
+        var snapshot = Snapshot(
+            gpus: devices,
+            gpuLoadPercent: Measurement.AvailableValue(10.0, "%", "test"),
+            gpuLoadDeviceId: null);
+        var result = tracker.Update(devices, "pci-0", snapshot,
+            snapshot.GpuLoadPercent, snapshot.GpuLoadDeviceId,
+            snapshot.GpuTemperatureC, snapshot.GpuTemperatureDeviceId);
+        Assert.Empty(result.EligibleInstanceIds);
     }
 }

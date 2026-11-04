@@ -31,6 +31,19 @@ namespace System_Monitor.Services
     }
 
     /// <summary>
+    /// The result of running an elevated command.
+    /// </summary>
+    /// <param name="ExitCode">The process exit code, or null when the process could not be started.</param>
+    /// <param name="FailureReason">Reason for failure when the process could not start or was cancelled.</param>
+    /// <param name="WasCancelled">True when the user cancelled (e.g., UAC declined).</param>
+    /// <param name="RebootRequired">True when the installer indicates a reboot is required (e.g., exit code 3010).</param>
+    public sealed record ElevatedRunResult(
+        int? ExitCode,
+        string? FailureReason = null,
+        bool WasCancelled = false,
+        bool RebootRequired = false);
+
+    /// <summary>
     /// Runs an external command and captures its output.
     ///
     /// Injected so that the nvidia-smi fallback can be tested against fakes,
@@ -50,6 +63,22 @@ namespace System_Monitor.Services
             string fileName,
             string arguments,
             TimeSpan timeout,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Launches <paramref name="fileName"/> as Administrator (elevated),
+        /// waits for the user to complete interaction, and returns the outcome.
+        ///
+        /// This is used for installers that require elevation, such as the
+        /// PawnIO driver installer. The process is launched with "runas" verb
+        /// so the OS prompts for UAC consent.
+        ///
+        /// Must report cancellation (UAC declined or user quit) distinctly from
+        /// a process crash or non-zero exit.
+        /// </summary>
+        Task<ElevatedRunResult> RunElevatedAsync(
+            string fileName,
+            string arguments,
             CancellationToken cancellationToken = default);
     }
 }

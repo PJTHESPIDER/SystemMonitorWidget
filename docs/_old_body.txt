@@ -1,0 +1,129 @@
+
+            if (string.IsNullOrWhiteSpace(displayName))
+                return NotAvailable;
+
+            var name = displayName.Trim();
+
+            // Remove trademark markers first (e.g., "Intel(R) Core(TM)" -> "Intel Core")
+            name = System.Text.RegularExpressions.Regex.Replace(name, @"\s*\([RTM]{1,2}\)\s*", " ");
+
+            // Remove manufacturer prefixes but preserve model family identifiers (GeForce, Radeon, Ryzen, Core, etc.)
+            // Order matters: LONGER specific patterns first, then generic manufacturer names
+            // We remove "Intel " to leave "Core i7", but we remove only "NVIDIA " to leave "GeForce RTX"
+            // "AMD " removes to leave "Ryzen 7", "Radeon RX" - preserving the model family
+            var manufacturerPrefixes = new[]
+            {
+                "Intel(R) ",        // "Intel(R) i7" -> "i7", "Intel(R) Core i7" -> "Core i7"
+                "Intel ",           // "Intel i7" -> "i7", "Intel Core i7" -> "Core i7"
+                "AMD ",             // "AMD Ryzen 7" -> "Ryzen 7", "AMD Radeon RX" -> "Radeon RX", "AMD APU" -> "APU"
+                "NVIDIA ",          // "NVIDIA GeForce RTX" -> "GeForce RTX", "NVIDIA Quadro" -> "Quadro", "NVIDIA GPU" -> "GPU"
+                "Nvidia ",          // "Nvidia GeForce RTX" -> "GeForce RTX", "Nvidia Quadro" -> "Quadro", "Nvidia GPU" -> "GPU"
+            };
+
+            foreach (var prefix in manufacturerPrefixes)
+            {
+                if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    name = name.Substring(prefix.Length);
+                    break; // Only remove one prefix
+                }
+            }
+
+            // Now handle the "Core " prefix that we want to keep for Intel Core models
+            // If the name starts with "Core " and looks like an Intel CPU model (followed by i3/i5/i7/i9 or numbers),
+            // KEEP "Core". Otherwise remove it (e.g., "Core 2 Duo" -> "2 Duo", "Core Solo" -> "Solo").
+            if (name.StartsWith("Core ", StringComparison.OrdinalIgnoreCase))
+            {
+                var afterCore = name.Substring(5).TrimStart();
+                // Check if it looks like an Intel Core model (i3/i5/i7/i9 or similar)
+                bool isIntelCoreModel = System.Text.RegularExpressions.Regex.IsMatch(afterCore, @"^i[3579]\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                    || System.Text.RegularExpressions.Regex.IsMatch(afterCore, @"^\d+[\s\-]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+                if (!isIntelCoreModel)
+                {
+                    name = afterCore;
+                }
+            }
+
+            // Also handle cases where suffix is followed by additional text like "@ 2.30GHz"
+            // Remove " CPU" (but keep "@ 2.30GHz"), " Processor" etc. when followed by "@"
+            var trailingSuffixesWithContent = new[]
+            {
+                " CPU", " cpu",
+                " Processor", " processor",
+                " APU", " apu",
+            };
+
+            foreach (var suffix in trailingSuffixesWithContent)
+            {
+                int idx = name.IndexOf(suffix + " @", StringComparison.OrdinalIgnoreCase);
+                if (idx >= 0)
+                {
+                    // Remove the suffix but keep everything after " @"
+                    var afterAt = name.Substring(idx + suffix.Length); // starts with " @..."
+                    name = name.Substring(0, idx).Trim() + " " + afterAt.Trim();
+                    break;
+                }
+            }
+
+            // Remove trailing "with Max-Q Design" (case-insensitive) before
+            // trailing-suffix removal so that a newly-exposed "GPU" suffix
+            // is also stripped by the trailing-suffix loop that follows.
+            // We remove it wherever it appears (not just at end) because
+            // it may be followed by other trailing suffixes like " GPU".
+            var maxQSuffixes = new[]
+            {
+                "with Max-Q Design", "with max-q design", "with Max-q Design",
+                "With Max-Q Design", "With max-q design", "With Max-q Design",
+            };
+            foreach (var suffix in maxQSuffixes)
+            {
+                int idx = name.IndexOf(suffix, StringComparison.OrdinalIgnoreCase);
+                if (idx >= 0)
+                {
+                    // Remove the suffix and any trailing space
+                    int startIdx = idx;
+                    if (startIdx > 0 && name[startIdx - 1] == ' ')
+                        startIdx--;
+                    int endIdx = idx + suffix.Length;
+                    if (endIdx < name.Length && name[endIdx] == ' ')
+                        endIdx++;
+                    name = name.Substring(0, startIdx) + name.Substring(endIdx);
+                    break; // Only remove one suffix
+                }
+            }
+
+            // Remove trailing "Processor", "CPU", "APU", "Graphics", "GPU" (case-insensitive)
+            // But preserve "Mobile", "Laptop" and meaningful model suffixes
+            // These are removed only when they appear at the END of the name
+            var trailingSuffixes = new[]
+            {
+                "Processor", " processor",
+                "CPU", " cpu",
+                "APU", " apu",
+                "Graphics", " graphics",
+                "GPU", " gpu",
+            };
+
+            foreach (var suffix in trailingSuffixes)
+            {
+                if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Also handle leading space if present
+                    int startIdx = name.Length - suffix.Length;
+                    if (startIdx > 0 && name[startIdx - 1] == ' ')
+                        startIdx--;
+                    name = name.Substring(0, startIdx);
+                    break; // Only remove one suffix
+                }
+            }
+
+            // Normalize whitespace: collapse multiple spaces to single
+            name = System.Text.RegularExpressions.Regex.Replace(name, @"\s+", " ").Trim();
+
+            // Fallback to original if normalization produced empty
+            if (string.IsNullOrWhiteSpace(name))
+                return displayName.Trim();
+
+            return name;
+        

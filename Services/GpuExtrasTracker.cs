@@ -8,41 +8,39 @@ namespace System_Monitor.Services
 {
     /// <summary>
     /// Tracks secondary GPU (extra device) eligibility across collection
-    /// cycles with a grace period for transient telemetry failures.
+    /// cycles with a time-based retention window after load qualification.
     ///
     /// <para><b>Why this exists</b></para>
     ///
     /// <para>
     /// The telemetry-aware extra-device ordering prefers devices with usable
-    /// current readings (load or temperature). A single failed read would
-    /// otherwise cause an immediate removal of the secondary row, which is
-    /// visually disruptive. The tracker retains eligible secondary devices
-    /// for a configurable number of consecutive cycles without usable displayed
-    /// telemetry before removing them.
+    /// current readings (load). A single failed read would otherwise cause
+    /// an immediate removal of the secondary row, which is visually disruptive.
+    /// The tracker retains eligible secondary devices for 6 seconds after their
+    /// last qualifying load (>= 5%) before removing them.
     /// </para>
     ///
-    /// <para><b>Grace policy</b></para>
+    /// <para><b>Retention policy (6-second time window)</b></para>
     ///
     /// <para>
-    /// The tracker retains each eligible secondary GPU for a configurable
-    /// number of consecutive cycles without usable <i>displayed</i> telemetry
-    /// (load or temperature — memory-only does not qualify) before removing it.
+    /// After a device qualifies with load >= 5%, it remains eligible for 6
+    /// seconds from that qualification time. Only a new qualifying load updates
+    /// the retention window. Zero load, temperature, memory, or device presence
+    /// do not independently qualify or extend retention.
     /// </para>
     ///
     /// <list type="number">
     /// <item><description>
-    /// <b>Eligibility starts with useful displayed telemetry.</b> A device
-    /// becomes eligible when it has at least one usable current reading of
-    /// load or temperature. Valid 0% counts. Memory-only telemetry does not
-    /// qualify. A device that has never qualified does not receive grace
-    /// merely because it was detected.
+    /// <b>Eligibility requires qualifying load.</b> A device becomes eligible when
+    /// its load is >= 5%. Valid 0% does NOT count; temperature, memory, or device
+    /// presence alone do not qualify. A device that has never qualified receives
+    /// no retention window.
     /// </description></item>
     /// <item><description>
-    /// <b>Retain eligibility through transient failures.</b> After qualifying,
-    /// retain the device through three consecutive completed collections
-    /// without usable displayed telemetry. Remove it on the fourth consecutive
-    /// failed/unusable collection. A qualifying successful collection resets
-    /// the failure count to zero.
+    /// <b>Retention is a 6-second time window from last qualification.</b> After
+    /// qualifying, the device remains eligible for 6 seconds measured from its
+    /// <see cref="ExtraTrackingState.LastQualifiedAt"/>. Only a new qualifying load
+    /// refreshes this window. It is not cycle-count based.
     /// </description></item>
     /// <item><description>
     /// <b>Count completed collection evaluations.</b> Count completed
@@ -96,12 +94,18 @@ namespace System_Monitor.Services
     public sealed class GpuExtrasTracker
     {
         /// <summary>
-        /// How many consecutive cycles without usable displayed telemetry the
-        /// tracker retains an eligible secondary GPU before removing it.
+        /// How many seconds after qualification a secondary GPU remains eligible
+        /// before being removed due to missing qualifying load.
         /// </summary>
-        public const int DefaultGraceCycles = 3;
+        public const int DefaultGraceSeconds = 6;
 
-        private readonly int _graceCycles;
+        /// <summary>
+        /// GPU load threshold (percent) below which an integrated GPU is considered
+        /// idle and subject to the idle suppression grace period.
+        /// </summary>
+        public const double IntegratedGpuIdleLoadThreshold = 5.0;
+
+        private readonly int _graceSeconds;
         private readonly TimeProvider _timeProvider;
 
         // Per-instance-id state for each tracked secondary GPU.
@@ -114,18 +118,18 @@ namespace System_Monitor.Services
         /// Creates a new tracker with the default grace period.
         /// </summary>
         public GpuExtrasTracker()
-            : this(DefaultGraceCycles, TimeProvider.System)
+            : this(DefaultGraceSeconds, TimeProvider.System)
         {
         }
 
         /// <summary>
-        /// Creates a new tracker with a custom grace period and time provider.
+        /// Creates a new tracker with a custom grace period (seconds) and time provider.
         /// </summary>
-        /// <param name="graceCycles">Number of cycles to retain a device without usable displayed telemetry.</param>
+        /// <param name="graceSeconds">Seconds to retain a device after its last qualifying load.</param>
         /// <param name="timeProvider">Time source for diagnostics (tests use FakeTimeProvider).</param>
-        public GpuExtrasTracker(int graceCycles, TimeProvider timeProvider)
+        public GpuExtrasTracker(int graceSeconds, TimeProvider timeProvider)
         {
-            _graceCycles = Math.Max(0, graceCycles);
+            _graceSeconds = Math.Max(0, graceSeconds);
             _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         }
 
@@ -140,7 +144,7 @@ namespace System_Monitor.Services
             /// <summary>The device id of the tracked device (for presence verification).</summary>
             public string DeviceId { get; init; } = string.Empty;
 
-            /// <summary>Number of consecutive cycles without usable displayed telemetry.</summary>
+            /// <summary>Number of consecutive non-qualifying cycles (diagnostic only; retention uses time window).</summary>
             public int ConsecutiveFailures { get; set; }
 
             /// <summary>Whether the device has ever qualified (had usable displayed telemetry) in its CURRENT secondary tenure.</summary>
@@ -294,20 +298,24 @@ namespace System_Monitor.Services
                     }
                 }
 
-                // Check if this device has usable displayed telemetry (load or temp).
-                bool hasDisplayedTelemetry = HasUsableDisplayedTelemetry(
-                    device, snapshot, gpuLoadPercent, gpuLoadDeviceId, gpuTemperatureC, gpuTemperatureDeviceId);
+                // Qualification: only load >= 5% qualifies. Zero load must NOT qualify.
+                // Temperature, memory, device presence, and repeated low-load must NOT
+                // refresh LastQualifiedAt or independently qualify.
+                bool hasQualifyingLoad = HasQualifyingLoad(
+                    device, snapshot, gpuLoadPercent, gpuLoadDeviceId, IntegratedGpuIdleLoadThreshold);
 
-                if (hasDisplayedTelemetry)
+                if (hasQualifyingLoad)
                 {
-                    // Qualified this cycle: reset failure count, mark as qualified.
+                    // Qualified this cycle: reset failure count, mark as qualified,
+                    // and update LastQualifiedAt ONLY on this qualification.
                     state.ConsecutiveFailures = 0;
                     state.HasEverQualified = true;
                     state.LastQualifiedAt = _timeProvider.GetUtcNow();
                 }
                 else
                 {
-                    // No usable displayed telemetry this cycle.
+                    // No qualifying load this cycle. Temperature/memory/device presence
+                    // or low-load samples must NOT independently refresh LastQualifiedAt.
                     if (state.HasEverQualified)
                     {
                         state.ConsecutiveFailures++;
@@ -316,11 +324,14 @@ namespace System_Monitor.Services
                 }
             }
 
-            // Determine eligible devices: those that have qualified and are within grace.
+            // Determine eligible devices: those that have qualified and are within
+            // the 6-second retention window from their last qualifying load.
             // Also exclude the primary GPU even if it was previously tracked.
+            var now = _timeProvider.GetUtcNow();
             var eligibleInstanceIds = _tracked
                 .Where(kvp => kvp.Value.HasEverQualified
-                           && kvp.Value.ConsecutiveFailures <= _graceCycles
+                           && kvp.Value.LastQualifiedAt.HasValue
+                           && (now - kvp.Value.LastQualifiedAt.Value).TotalSeconds <= _graceSeconds
                            && !string.Equals(kvp.Key, primaryInstanceId, StringComparison.OrdinalIgnoreCase))
                 .Select(kvp => kvp.Key)
                 .ToList();
@@ -376,6 +387,88 @@ namespace System_Monitor.Services
             && measurement.Value.HasValue
             && !double.IsNaN(measurement.Value.Value)
             && !double.IsInfinity(measurement.Value.Value);
+
+        private static bool HasQualifyingLoad(
+            HardwareDevice device,
+            MetricsSnapshot? snapshot,
+            Measurement? gpuLoadPercent,
+            string? gpuLoadDeviceId,
+            double threshold)
+        {
+            if (snapshot is null)
+                return false;
+
+            var deviceId = device.DeviceId;
+
+            // Load qualification requires load >= threshold (default 5%). Zero load does NOT qualify.
+            var load = snapshot.Readings.FirstOrDefault(r => r.DeviceId == deviceId && r.Metric == LhmSensorSelection.GpuLoadMetric)?.Measurement;
+            if (IsUsable(load) && load.Value.HasValue && load.Value.Value >= threshold)
+                return true;
+
+            // Check properly attributed scalar fallback.
+            if (IsUsable(gpuLoadPercent) && string.Equals(gpuLoadDeviceId, deviceId, StringComparison.Ordinal)
+                && gpuLoadPercent.Value.HasValue && gpuLoadPercent.Value.Value >= threshold)
+                return true;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Checks if the GPU's load is below the specified threshold (but above 0%).
+        /// Used for idle integrated GPU suppression. A 0% load is a valid reading
+        /// indicating an active GPU with no load, not an idle/suppressed GPU.
+        /// </summary>
+        private static bool HasLoadBelowThreshold(
+            HardwareDevice device,
+            MetricsSnapshot? snapshot,
+            Measurement? gpuLoadPercent,
+            string? gpuLoadDeviceId,
+            double threshold)
+        {
+            if (snapshot is null)
+                return false;
+
+            var deviceId = device.DeviceId;
+
+            // Check device-level load reading first.
+            var load = snapshot.Readings.FirstOrDefault(r => r.DeviceId == deviceId && r.Metric == LhmSensorSelection.GpuLoadMetric)?.Measurement;
+            if (IsUsable(load) && load.Value.HasValue && load.Value.Value > 0 && load.Value.Value < threshold)
+                return true;
+
+            // Check properly attributed scalar fallback.
+            if (IsUsable(gpuLoadPercent) && string.Equals(gpuLoadDeviceId, deviceId, StringComparison.Ordinal)
+                && gpuLoadPercent.Value.HasValue && gpuLoadPercent.Value.Value > 0 && gpuLoadPercent.Value.Value < threshold)
+                return true;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Checks if the GPU has usable temperature telemetry.
+        /// Temperature telemetry qualifies an iGPU even when load is idle.
+        /// </summary>
+        private static bool HasTemperatureTelemetry(
+            HardwareDevice device,
+            MetricsSnapshot? snapshot,
+            Measurement? gpuTemperatureC,
+            string? gpuTemperatureDeviceId)
+        {
+            if (snapshot is null)
+                return false;
+
+            var deviceId = device.DeviceId;
+
+            // Check device-level temperature reading first.
+            var temp = snapshot.Readings.FirstOrDefault(r => r.DeviceId == deviceId && r.Metric == LhmSensorSelection.GpuTemperatureMetric)?.Measurement;
+            if (IsUsable(temp))
+                return true;
+
+            // Check properly attributed scalar fallback.
+            if (IsUsable(gpuTemperatureC) && string.Equals(gpuTemperatureDeviceId, deviceId, StringComparison.Ordinal))
+                return true;
+
+            return false;
+        }
 
         /// <summary>
         /// Orders eligible devices by the same presentation policy used for extras.

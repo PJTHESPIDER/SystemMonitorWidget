@@ -253,6 +253,7 @@ public class WidgetPayloadPresenterTests
         Assert.Equal("discrete", payload.GetText(WidgetPayloadPresenter.GpuIntegrationKey));
 
         // The integrated card is described as an additional device.
+        Assert.True(payload.GetFlag(WidgetPayloadPresenter.GpuSectionPresentKey));
         Assert.True(payload.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
         Assert.Contains("Intel(R) UHD Graphics 630", payload.GetText(WidgetPayloadPresenter.ExtraKey(1)));
         Assert.Contains("integrated", payload.GetText(WidgetPayloadPresenter.ExtraKey(1)));
@@ -266,6 +267,7 @@ public class WidgetPayloadPresenterTests
         var payload = WidgetPayloadPresenter.Present(snapshot);
 
         Assert.False(payload.GetFlag(WidgetPayloadPresenter.GpuDevicePresentKey));
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.GpuSectionPresentKey));
         Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.GpuKey));
         Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.GpuTempKey));
         Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.GpuVramKey));
@@ -679,6 +681,7 @@ public class WidgetPayloadPresenterTests
         var payload = WidgetPayloadPresenter.Present(snapshot, "pci-intel-that-was-removed");
 
         Assert.False(payload.GetFlag(WidgetPayloadPresenter.GpuDevicePresentKey));
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.GpuSectionPresentKey));
         Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.GpuKey));
     }
 
@@ -879,12 +882,13 @@ public class WidgetPayloadPresenterTests
     [Fact]
     public void EveryCardSize_BindsExceptionalStaleNoticeToAggregateFlag()
     {
-        Assert.Contains("${sampleIsStale}", WidgetTemplates.SmallTemplate);
-        Assert.Contains("${sampleIsStale}", WidgetTemplates.MediumTemplate);
-        Assert.Contains("${sampleIsStale}", WidgetTemplates.LargeTemplate);
+        // Original conditional stale notice with hardcoded text
         Assert.Contains("Telemetry is stale", WidgetTemplates.SmallTemplate);
         Assert.Contains("Telemetry is stale", WidgetTemplates.MediumTemplate);
         Assert.Contains("Telemetry is stale", WidgetTemplates.LargeTemplate);
+        Assert.Contains("$when", WidgetTemplates.SmallTemplate);
+        Assert.Contains("$when", WidgetTemplates.MediumTemplate);
+        Assert.Contains("$when", WidgetTemplates.LargeTemplate);
     }
 
     [Fact]

@@ -68,6 +68,20 @@ namespace System_Monitor.Services
             _flags.TryGetValue(key, out var value) && value;
 
         /// <summary>
+        /// Sets a text value on the payload. Replaces any existing value
+        /// with the same key, or adds a new one.
+        /// </summary>
+        internal void SetText(string key, string value) =>
+            _text[key] = value;
+
+        /// <summary>
+        /// Sets a flag value on the payload. Replaces any existing flag
+        /// with the same key, or adds a new one.
+        /// </summary>
+        internal void SetFlag(string key, bool value) =>
+            _flags[key] = value;
+
+        /// <summary>
         /// Serializes the payload to the JSON the widget host expects.
         ///
         /// Text values are JSON strings and flags are JSON booleans, so a

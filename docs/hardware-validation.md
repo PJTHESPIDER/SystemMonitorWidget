@@ -378,14 +378,67 @@ part with no memory sensors at all. So the **dedicated** heading and the
 | Medium | `Dedicated GPU memory` | w=127 h=**16** — one line, no wrap | `1.0 GB / 8.0 GB (12.7%)` | w=137 h=19 — one line, fully visible |
 | Large | `Dedicated GPU memory` | w=127 h=**16** — one line, no wrap | `1.0 GB / 8.0 GB (12.7%)` | w=141 h=19 — one line, fully visible |
 
-**Manual checklist for current candidate (host not accessible):**
-- [ ] Pin the card in the Widgets board
-- [ ] Verify Small: GPU row shows `1.0 GB` (compact) on one line, no clipping
-- [ ] Verify Medium: heading `Dedicated GPU memory` one line (h=16), figure `1.0 GB / 8.0 GB (12.7%)` one line fully visible
-- [ ] Verify Large: same as Medium, figure fully visible
-- [ ] Verify all three sizes: no root-level actions array present
-- [ ] Verify Medium: disk figure shown as `607.4 GB (32.9%)` compact form
-- [ ] Verify Small: disk figure still present (compact)
+### Current source layout pass (2026-11-03)
+
+The v3 screenshots showed why a spacing preset alone was insufficient: the
+Large card's title-to-CPU and Network-to-bottom clearances remained roughly
+twice its inter-category gaps. Medium and Large now use the standard Adaptive
+Card block-element `height: "stretch"` on empty Container elements to share
+the host-provided vertical slack across all visible gaps:
+
+| Size | Leading | Between peer categories | Trailing | Gap slots when GPU category is visible |
+|---|---|---|---|---:|
+| Small | Existing layout; unchanged | Existing compact row spacing; unchanged | Existing layout; unchanged | — |
+| Medium | One stretch-height Container | One stretch-height Container per peer boundary | One stretch-height Container | 5 |
+| Large | One stretch-height Container | One stretch-height Container per peer boundary | One stretch-height Container | 6 |
+
+These are equal flex slots, not fixed pixel values: with the host's fixed card
+height, the renderer assigns remaining vertical height among the stretch
+elements after measuring the visible category blocks. Medium and Large can
+therefore resolve to different gap sizes based on their independent card
+heights and content. Hardware-category Containers use `spacing: None` and
+have no padding, so the stretch elements are the only template-controlled
+source of vertical gap. Heading/metric spacing within each category remains
+compact.
+
+The Adaptive Card 1.6 schema exposes `height` (`auto` / `stretch`) on block
+elements, including Containers. It exposes no root or Container `padding`
+property. The Widgets host controls the card's fixed height, title/header
+chrome, body inset, bottom inset, and mapping of available height into the
+layout. Thus stretch slots make all template-controlled gaps equal; exact
+equality of visible title-to-data and data-to-bottom gaps still depends on
+the host's outer insets and needs live screenshot validation.
+
+The GPU spacer before the GPU category uses the same `gpuSectionPresent`
+condition as the category. When that category is hidden, both the GPU block
+and its preceding gap disappear; the unconditional Memory spacer then
+becomes the CPU-to-Memory gap. Additional GPUs remain inside the single GPU
+category and their existing per-device conditions are unchanged. CPU
+temperature remains a conditional column. The stale notice remains
+conditional and readable before the leading stretch slot; it adds visible
+content only while stale and never reserves a hidden row. Small and all
+telemetry/customization behavior are unchanged.
+
+Structural tests assert the supported stretch properties, slot order,
+conditional GPU gap, and compact category internals. They do not prove how
+the installed Widgets renderer distributes height or certify pixel equality,
+wrapping, or clipping. User screenshots of the approved v1.0.0.2 candidate
+(2026-11-03) provide the rendered check for Medium and Large with the primary
+GPU visible, no additional GPU rows, a fresh telemetry notice state, and
+CPU temperature shown as N/A:
+
+| Size | Screenshot-measured visible gaps (approx.) | Render result |
+|---|---|---|
+| Medium | Title-area-to-CPU ~31 px; category gaps ~26–33 px; Storage-to-bottom ~20 px | All four categories visible; no apparent clipping or wrapping |
+| Large | Title-area-to-CPU ~39 px; category gaps ~34–37 px; Network-to-bottom ~30 px | All five categories visible; no apparent clipping or wrapping |
+
+These are approximate pixel reads from screenshots, not UI Automation
+geometry, and the title-area measurement includes host-rendered header/body
+insets. The gaps are substantially more consistent than the earlier
+preset-only layout, though the Medium trailing gap remains somewhat smaller.
+Maximum additional-GPU rows, hidden-GPU redistribution, and stale-notice-on
+rendering were not demonstrated in these screenshots; structural `$when`
+coverage remains separate evidence for those cases.
 
 The label **policy** is separately covered by fixture:
 

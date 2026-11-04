@@ -72,6 +72,7 @@ namespace System_Monitor.Services
         // blocked sensor never wipes a working value, and so a value is
         // never left stale in the model as if it were current.
         private ScalarCandidate? _fallbackCpuClock;
+        private readonly ICpuFrequencyReader _cpuFrequencyReader;
         private ScalarCandidate? _fallbackGpuLoad;
         private ScalarCandidate? _fallbackGpuTemperature;
         private ScalarCandidate? _fallbackGpuVramUsed;
@@ -225,6 +226,7 @@ namespace System_Monitor.Services
             }
 
             _sensorSource = CreateSensorSource();
+            _cpuFrequencyReader = new CpuFrequencyReader();
         }
 
         /// <summary>
@@ -232,11 +234,21 @@ namespace System_Monitor.Services
         /// collection integration tests that supply a fake backend.
         /// </summary>
         internal SystemMetricsService(SystemMetrics model, NvidiaGpuFallback nvidiaFallback, ILhmSensorSource sensorSource)
+            : this(model, nvidiaFallback, sensorSource, new CpuFrequencyReader())
+        {
+        }
+
+        /// <summary>
+        /// Creates the service with an injected sensor source and CPU frequency reader,
+        /// for tests that supply both fakes.
+        /// </summary>
+        internal SystemMetricsService(SystemMetrics model, NvidiaGpuFallback nvidiaFallback, ILhmSensorSource sensorSource, ICpuFrequencyReader cpuFrequencyReader)
         {
             _model = model;
             _nvidiaFallback = nvidiaFallback;
             _availability = new SensorAvailability();
             _sensorSource = sensorSource;
+            _cpuFrequencyReader = cpuFrequencyReader;
 
             if (GetSystemTimes(out var idle, out var kernel, out var user))
             {
@@ -353,7 +365,7 @@ namespace System_Monitor.Services
         /// The provenance of the Windows processor-class clock reading. The
         /// class is not device-identified, so this figure names no device.
         /// </summary>
-        private const string CpuClockSource = "Win32_Processor";
+        private const string CpuClockSource = "Processor Information";
 
         /// <summary>
         /// The provenance of the NVIDIA command-line fallback's readings.
@@ -975,18 +987,11 @@ namespace System_Monitor.Services
         {
             RunCollector("cpu-clock", () =>
             {
-                using var searcher = new ManagementObjectSearcher("root\\CIMV2",
-                    "SELECT CurrentClockSpeed FROM Win32_Processor");
-                var speeds = searcher.Get()
-                    .Cast<ManagementObject>()
-                    .Select(mo => TryGetDouble(mo, "CurrentClockSpeed"))
-                    .Where(v => v.HasValue)
-                    .Select(v => v!.Value)
-                    .ToList();
-                if (speeds.Count > 0)
+                var freq = _cpuFrequencyReader.ReadMegahertz();
+                if (freq.HasValue && freq > 0)
                 {
                     _fallbackCpuClock = new ScalarCandidate(
-                        speeds.Average(),
+                        freq.Value,
                         "MHz",
                         CpuClockSource,
                         DateTimeOffset.UtcNow,

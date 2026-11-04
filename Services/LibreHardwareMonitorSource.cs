@@ -1,8 +1,12 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using LibreHardwareMonitor.Hardware;
 using LibreHardwareMonitor.Hardware.Gpu;
+using System_Monitor.Models;
 
 namespace System_Monitor.Services
 {
@@ -109,6 +113,180 @@ namespace System_Monitor.Services
                         "read",
                         "failed",
                         elapsed: _timeProvider.GetUtcNow() - started,
+                        detail: DiagnosticDetail.Describe(ex));
+                }
+            }
+
+            return devices;
+        }
+
+        /// <summary>
+        /// Closes the existing Computer instance and re-opens a new one,
+        /// so that a newly installed driver (e.g. PawnIO) is picked up.
+        ///
+        /// Serialized against concurrent Read() and Dispose() via _lock.
+        /// Returns a structured ReinitializeResult.
+        ///
+        /// Cancellation is cooperative: checked before the destructive close.
+        /// Cannot interrupt synchronous native initialization in the underlying
+        /// library.
+        /// </summary>
+        public Task<ReinitializeResult> ReinitializeAsync(CancellationToken cancellationToken = default)
+        {
+            var started = _timeProvider.GetUtcNow();
+
+            // Capture the "was available" state under the lock, before any
+            // destructive operation.
+            var wasAvailable = IsAvailable;
+
+            try
+            {
+                lock (_lock)
+                {
+                    if (_disposed)
+                    {
+                        return Task.FromResult(new ReinitializeResult
+                        {
+                            Outcome = ReinitializationOutcome.DisposedDuringReinit,
+                            WasAvailableBefore = wasAvailable,
+                            NewlyAvailableSensorTypes = Array.Empty<string>(),
+                            FailureReason = "Source was disposed during reinitialization",
+                            CompletedAt = _timeProvider.GetUtcNow(),
+                        });
+                    }
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        return Task.FromResult(new ReinitializeResult
+                        {
+                            Outcome = ReinitializationOutcome.Cancelled,
+                            WasAvailableBefore = wasAvailable,
+                            NewlyAvailableSensorTypes = Array.Empty<string>(),
+                            FailureReason = "Reinitialization cancelled before close",
+                            CompletedAt = _timeProvider.GetUtcNow(),
+                        });
+                    }
+
+                    if (!_initialized)
+                    {
+                        return Task.FromResult(new ReinitializeResult
+                        {
+                            Outcome = ReinitializationOutcome.NotInitialized,
+                            WasAvailableBefore = wasAvailable,
+                            NewlyAvailableSensorTypes = Array.Empty<string>(),
+                            FailureReason = "Backend was not previously initialized",
+                            CompletedAt = _timeProvider.GetUtcNow(),
+                        });
+                    }
+
+                    // Close existing Computer — destructive operation, cancellation
+                    // already checked above. Cannot interrupt native Close() once started.
+                    try
+                    {
+                        _computer?.Close();
+                    }
+                    catch (Exception ex)
+                    {
+                        DiagnosticLog.Shared.Warning(
+                            BackendName,
+                            "reinitialize-close",
+                            "failed",
+                            detail: DiagnosticDetail.Describe(ex));
+                        // Proceed anyway — we need to create a new Computer regardless.
+                    }
+                    finally
+                    {
+                        _computer = null;
+                        _initialized = false;
+                        _failedRefreshes.Clear();
+                    }
+                }
+
+                // Re-initialize outside the lock to avoid holding it across
+                // potentially blocking native calls. EnsureInitialized is
+                // safe because Read() also takes _lock and checks _initialized.
+                var nowAvailable = EnsureInitialized();
+
+                var newlyAvailable = new List<string>();
+                if (nowAvailable && !wasAvailable)
+                {
+                    // Probe for newly available CPU temperature sensors.
+                    try
+                    {
+                        var devices = SafeReadForReinit();
+                        foreach (var d in devices.Where(x => x.IsCpu))
+                        {
+                            foreach (var s in d.Sensors.Where(s => s.SensorType == "Temperature" && s.Value.HasValue))
+                                newlyAvailable.Add(s.Name ?? "unnamed");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        DiagnosticLog.Shared.Warning(
+                            BackendName,
+                            "reinitialize-probe",
+                            "failed",
+                            detail: DiagnosticDetail.Describe(ex));
+                    }
+                }
+
+                return Task.FromResult(new ReinitializeResult
+                {
+                    Outcome = nowAvailable
+                        ? newlyAvailable.Count > 0
+                            ? ReinitializationOutcome.Success
+                            : ReinitializationOutcome.TemperatureUnavailable
+                        : ReinitializationOutcome.InitializationFailed,
+                    WasAvailableBefore = wasAvailable,
+                    NewlyAvailableSensorTypes = newlyAvailable,
+                    FailureReason = nowAvailable
+                        ? (newlyAvailable.Count > 0 ? null : "No CPU temperature sensors available after reinitialization")
+                        : UnavailableReason,
+                    CompletedAt = _timeProvider.GetUtcNow(),
+                });
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult(new ReinitializeResult
+                {
+                    Outcome = ReinitializationOutcome.InitializationFailed,
+                    WasAvailableBefore = wasAvailable,
+                    NewlyAvailableSensorTypes = Array.Empty<string>(),
+                    FailureReason = ex.Message,
+                    CompletedAt = _timeProvider.GetUtcNow(),
+                });
+            }
+        }
+
+        /// <summary>
+        /// Performs a single Read() without going through the public interface,
+        /// for use during reinitialization probing. This is a best-effort probe.
+        /// </summary>
+        private IReadOnlyList<LhmDeviceDescriptor> SafeReadForReinit()
+        {
+            var devices = new List<LhmDeviceDescriptor>();
+
+            lock (_lock)
+            {
+                if (_disposed || !_initialized || _computer is null)
+                    return devices;
+
+                try
+                {
+                    foreach (var hardware in _computer.Hardware)
+                    {
+                        var refreshFailed = UpdateRecursive(hardware);
+                        var descriptor = Describe(hardware, refreshFailed);
+                        if (descriptor is not null)
+                            devices.Add(descriptor);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DiagnosticLog.Shared.Warning(
+                        BackendName,
+                        "reinit-probe",
+                        "read-failed",
                         detail: DiagnosticDetail.Describe(ex));
                 }
             }

@@ -22,6 +22,11 @@ namespace System_Monitor.Services
     /// matching template.
     /// </description></item>
     /// <item><description>
+    /// Medium and Large use supported stretch-height containers to share
+    /// available vertical slack between leading, peer-section and trailing
+    /// gaps. This avoids fixed-pixel assumptions and preset-only spacing.
+    /// </description></item>
+    /// <item><description>
     /// A block that only makes sense when there is a device to show is
     /// guarded by a <c>$when</c> condition on a payload boolean, so a
     /// machine with no GPU does not render an empty GPU section.
@@ -119,11 +124,12 @@ namespace System_Monitor.Services
           "type": "AdaptiveCard",
           "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
           "version": "1.6",
+          "verticalContentAlignment": "Center",
           "body": [
             { "type": "TextBlock", "text": "Telemetry is stale", "size": "ExtraSmall", "isSubtle": true, "spacing": "None", "$when": "${sampleIsStale}" },
             {
               "type": "ColumnSet",
-              "spacing": "None",
+              "spacing": "Small",
               "columns": [
                 {
                   "type": "Column",
@@ -236,7 +242,8 @@ namespace System_Monitor.Services
                     }
                   ]
                 }
-              ]
+              ],
+              "$when": "${gpuDevicePresent}"
             },
             {
               "type": "ColumnSet",
@@ -319,201 +326,264 @@ namespace System_Monitor.Services
           "type": "AdaptiveCard",
           "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
           "version": "1.6",
+          "verticalContentAlignment": "Center",
           "body": [
             { "type": "TextBlock", "text": "Telemetry is stale", "size": "ExtraSmall", "isSubtle": true, "spacing": "None", "$when": "${sampleIsStale}" },
             {
-              "type": "TextBlock",
-              "text": "CPU — ${cpuNameCompact}",
-              "weight": "Bolder",
-              "size": "Small",
-              "spacing": "Small",
-              "wrap": true
+              "type": "Container",
+              "id": "layoutGapLeading",
+              "height": "stretch",
+              "spacing": "None",
+              "items": []
             },
             {
-              "type": "ColumnSet",
+              "type": "Container",
               "spacing": "None",
-              "columns": [
+              "items": [
                 {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "Usage",
-                      "size": "Small",
-                      "isSubtle": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${cpu}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
-                    }
-                  ]
+                  "type": "TextBlock",
+                  "text": "CPU — ${cpuNameCompact}",
+                  "weight": "Bolder",
+                  "size": "Small",
+                  "spacing": "None",
+                  "wrap": true
                 },
                 {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
+                  "type": "ColumnSet",
+                  "spacing": "None",
+                  "columns": [
                     {
-                      "type": "TextBlock",
-                      "text": "Speed",
-                      "size": "Small",
-                      "isSubtle": true
+                      "type": "Column",
+                      "width": "stretch",
+                      "items": [
+                        {
+                          "type": "TextBlock",
+                          "text": "Usage",
+                          "size": "Small",
+                          "isSubtle": true
+                        },
+                        {
+                          "type": "TextBlock",
+                          "text": "${cpu}",
+                          "size": "Medium",
+                          "weight": "Bolder",
+                          "spacing": "None"
+                        }
+                      ]
                     },
                     {
-                      "type": "TextBlock",
-                      "text": "${cpuClock}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
+                      "type": "Column",
+                      "width": "stretch",
+                      "items": [
+                        {
+                          "type": "TextBlock",
+                          "text": "Speed",
+                          "size": "Small",
+                          "isSubtle": true
+                        },
+                        {
+                          "type": "TextBlock",
+                          "text": "${cpuClock}",
+                          "size": "Medium",
+                          "weight": "Bolder",
+                          "spacing": "None"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "Column",
+                      "width": "stretch",
+                      "items": [
+                        {
+                          "type": "TextBlock",
+                          "text": "Temp",
+                          "size": "Small",
+                          "isSubtle": true
+                        },
+                        {
+                          "type": "TextBlock",
+                          "text": "${cpuTemp}",
+                          "size": "Medium",
+                          "weight": "Bolder",
+                          "spacing": "None"
+                        }
+                      ],
+                      "$when": "${cpuTempShow}"
                     }
                   ]
+                }
+              ]
+            },
+            {
+              "type": "Container",
+              "id": "layoutGapBeforeGpu",
+              "height": "stretch",
+              "spacing": "None",
+              "items": [],
+              "$when": "${gpuSectionPresent}"
+            },
+            {
+              "type": "Container",
+              "spacing": "None",
+              "items": [
+                {
+                  "type": "TextBlock",
+                  "text": "GPU — ${gpuNameCompact}",
+                  "weight": "Bolder",
+                  "size": "Small",
+                  "spacing": "None",
+                  "wrap": true,
+                  "$when": "${gpuDevicePresent}"
                 },
                 {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
+                  "type": "TextBlock",
+                  "text": "${gpuSelectionNotice}",
+                  "size": "Small",
+                  "isSubtle": true,
+                  "spacing": "None",
+                  "wrap": true,
+                  "$when": "${gpuSelectionMissing}"
+                },
+                {
+                  "type": "ColumnSet",
+                  "spacing": "None",
+                  "columns": [
                     {
-                      "type": "TextBlock",
-                      "text": "Temp",
-                      "size": "Small",
-                      "isSubtle": true
+                      "type": "Column",
+                      "width": "auto",
+                      "items": [
+                        {
+                          "type": "TextBlock",
+                          "text": "Usage",
+                          "size": "Small",
+                          "isSubtle": true
+                        },
+                        {
+                          "type": "TextBlock",
+                          "text": "${gpu}",
+                          "size": "Medium",
+                          "weight": "Bolder",
+                          "spacing": "None"
+                        }
+                      ]
                     },
                     {
-                      "type": "TextBlock",
-                      "text": "${cpuTemp}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
+                      "type": "Column",
+                      "width": "auto",
+                      "items": [
+                        {
+                          "type": "TextBlock",
+                          "text": "Temp",
+                          "size": "Small",
+                          "isSubtle": true
+                        },
+                        {
+                          "type": "TextBlock",
+                          "text": "${gpuTemp}",
+                          "size": "Medium",
+                          "weight": "Bolder",
+                          "spacing": "None"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "Column",
+                      "width": "stretch",
+                      "items": [
+                        {
+                          "type": "TextBlock",
+                          "text": "${gpuVramLabelCompact}",
+                          "size": "Small",
+                          "isSubtle": true,
+                          "wrap": true
+                        },
+                        {
+                          "type": "TextBlock",
+                          "text": "${gpuMemoryCapacityCompact}",
+                          "size": "Medium",
+                          "weight": "Bolder",
+                          "spacing": "None",
+                          "wrap": true
+                        }
+                      ]
                     }
                   ],
-                  "$when": "${cpuTempShow}"
+                  "$when": "${gpuDevicePresent}"
+                },
+                {
+                  "type": "TextBlock",
+                  "text": "Other GPU — ${gpuExtra1}",
+                  "size": "Small",
+                  "isSubtle": true,
+                  "spacing": "None",
+                  "wrap": true,
+                  "$when": "${gpuExtra1Available}"
+                }
+              ],
+              "$when": "${gpuSectionPresent}"
+            },
+            {
+              "type": "Container",
+              "id": "layoutGapBeforeMemory",
+              "height": "stretch",
+              "spacing": "None",
+              "items": []
+            },
+            {
+              "type": "Container",
+              "spacing": "None",
+              "items": [
+                {
+                  "type": "TextBlock",
+                  "text": "Memory (RAM)",
+                  "weight": "Bolder",
+                  "size": "Small",
+                  "spacing": "None"
+                },
+                {
+                  "type": "TextBlock",
+                  "text": "${ramCapacityCompact}",
+                  "size": "Medium",
+                  "weight": "Bolder",
+                  "spacing": "None",
+                  "wrap": true
                 }
               ]
             },
             {
-              "type": "TextBlock",
-              "text": "GPU — ${gpuNameCompact}",
-              "weight": "Bolder",
-              "size": "Small",
-              "spacing": "Small",
-              "wrap": true,
-              "$when": "${gpuDevicePresent}"
+              "type": "Container",
+              "id": "layoutGapBeforeStorage",
+              "height": "stretch",
+              "spacing": "None",
+              "items": []
             },
             {
-              "type": "TextBlock",
-              "text": "${gpuSelectionNotice}",
-              "size": "Small",
-              "isSubtle": true,
+              "type": "Container",
               "spacing": "None",
-              "wrap": true,
-              "$when": "${gpuSelectionMissing}"
-            },
-            {
-              "type": "ColumnSet",
-              "spacing": "None",
-              "columns": [
+              "items": [
                 {
-                  "type": "Column",
-                  "width": "auto",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "Usage",
-                      "size": "Small",
-                      "isSubtle": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${gpu}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
-                    }
-                  ]
+                  "type": "TextBlock",
+                  "text": "Storage (Disk)",
+                  "weight": "Bolder",
+                  "size": "Small",
+                  "spacing": "None"
                 },
                 {
-                  "type": "Column",
-                  "width": "auto",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "Temp",
-                      "size": "Small",
-                      "isSubtle": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${gpuTemp}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None"
-                    }
-                  ]
-                },
-                {
-                  "type": "Column",
-                  "width": "stretch",
-                  "items": [
-                    {
-                      "type": "TextBlock",
-                      "text": "${gpuVramLabelCompact}",
-                      "size": "Small",
-                      "isSubtle": true,
-                      "wrap": true
-                    },
-                    {
-                      "type": "TextBlock",
-                      "text": "${gpuMemoryCapacityCompact}",
-                      "size": "Medium",
-                      "weight": "Bolder",
-                      "spacing": "None",
-                      "wrap": true
-                    }
-                  ]
+                  "type": "TextBlock",
+                  "text": "${diskCapacityCompact}",
+                  "size": "Medium",
+                  "weight": "Bolder",
+                  "spacing": "None",
+                  "wrap": true
                 }
               ]
             },
             {
-              "type": "TextBlock",
-              "text": "Other GPU — ${gpuExtra1}",
-              "size": "Small",
-              "isSubtle": true,
+              "type": "Container",
+              "id": "layoutGapTrailing",
+              "height": "stretch",
               "spacing": "None",
-              "wrap": true,
-              "$when": "${gpuExtra1Available}"
-            },
-            {
-              "type": "TextBlock",
-              "text": "Memory (RAM)",
-              "weight": "Bolder",
-              "size": "Small",
-              "spacing": "Small"
-            },
-            {
-              "type": "TextBlock",
-              "text": "${ramCapacityCompact}",
-              "size": "Medium",
-              "weight": "Bolder",
-              "spacing": "None",
-              "wrap": true
-            },
-            {
-              "type": "TextBlock",
-              "text": "Storage (Disk)",
-              "weight": "Bolder",
-              "size": "Small",
-              "spacing": "Small"
-            },
-            {
-              "type": "TextBlock",
-              "text": "${diskCapacityCompact}",
-              "size": "Medium",
-              "weight": "Bolder",
-              "spacing": "None",
-              "wrap": true
+              "items": []
             }
           ]
         }
@@ -535,20 +605,31 @@ namespace System_Monitor.Services
           "type": "AdaptiveCard",
           "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
           "version": "1.6",
+          "verticalContentAlignment": "Center",
           "body": [
             { "type": "TextBlock", "text": "Telemetry is stale", "size": "ExtraSmall", "isSubtle": true, "spacing": "None", "$when": "${sampleIsStale}" },
             {
+              "type": "Container",
+              "id": "layoutGapLeading",
+              "height": "stretch",
+              "spacing": "None",
+              "items": []
+            },
+            {
+              "type": "Container",
+              "spacing": "None",
+              "items": [
+                {
               "type": "TextBlock",
               "text": "Processor (CPU) — ${cpuNameCompact}",
               "weight": "Bolder",
               "size": "Medium",
-              "spacing": "Medium",
-              "separator": true,
+              "spacing": "None",
               "wrap": true
             },
             {
               "type": "ColumnSet",
-              "spacing": "Large",
+              "spacing": "None",
               "columns": [
                 {
                   "type": "Column",
@@ -556,7 +637,7 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "CPU Load",
+                      "text": "Usage",
                       "size": "Small",
                       "isSubtle": true
                     },
@@ -609,13 +690,27 @@ namespace System_Monitor.Services
                   "$when": "${cpuTempShow}"
                 }
               ]
+                }
+              ]
             },
             {
+              "type": "Container",
+              "id": "layoutGapBeforeGpu",
+              "height": "stretch",
+              "spacing": "None",
+              "items": [],
+              "$when": "${gpuSectionPresent}"
+            },
+            {
+              "type": "Container",
+              "spacing": "None",
+              "items": [
+                {
               "type": "TextBlock",
               "text": "Graphics (GPU) — ${gpuNameCompact}",
               "weight": "Bolder",
               "size": "Medium",
-              "spacing": "Medium",
+              "spacing": "None",
               "wrap": true,
               "$when": "${gpuDevicePresent}"
             },
@@ -630,7 +725,7 @@ namespace System_Monitor.Services
             },
             {
               "type": "ColumnSet",
-              "spacing": "Small",
+              "spacing": "None",
               "columns": [
                 {
                   "type": "Column",
@@ -638,7 +733,7 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "GPU Load",
+                      "text": "Usage",
                       "size": "Small",
                       "isSubtle": true
                     },
@@ -657,7 +752,7 @@ namespace System_Monitor.Services
                   "items": [
                     {
                       "type": "TextBlock",
-                      "text": "GPU Temp",
+                      "text": "Temp",
                       "size": "Small",
                       "isSubtle": true
                     },
@@ -691,7 +786,8 @@ namespace System_Monitor.Services
                     }
                   ]
                 }
-              ]
+              ],
+              "$when": "${gpuDevicePresent}"
             },
             {
               "type": "TextBlock",
@@ -719,17 +815,31 @@ namespace System_Monitor.Services
               "spacing": "None",
               "wrap": true,
               "$when": "${gpuExtra3Available}"
+                }
+              ],
+              "$when": "${gpuSectionPresent}"
             },
             {
+              "type": "Container",
+              "id": "layoutGapBeforeMemory",
+              "height": "stretch",
+              "spacing": "None",
+              "items": []
+            },
+            {
+              "type": "Container",
+              "spacing": "None",
+              "items": [
+                {
               "type": "TextBlock",
               "text": "Memory (RAM)",
               "weight": "Bolder",
               "size": "Medium",
-              "spacing": "Medium"
+              "spacing": "None"
             },
             {
               "type": "ColumnSet",
-              "spacing": "Small",
+              "spacing": "None",
               "columns": [
                 {
                   "type": "Column",
@@ -751,17 +861,30 @@ namespace System_Monitor.Services
                   ]
                 }
               ]
+                }
+              ]
             },
             {
+              "type": "Container",
+              "id": "layoutGapBeforeStorage",
+              "height": "stretch",
+              "spacing": "None",
+              "items": []
+            },
+            {
+              "type": "Container",
+              "spacing": "None",
+              "items": [
+                {
               "type": "TextBlock",
               "text": "Storage (Disk)",
               "weight": "Bolder",
               "size": "Medium",
-              "spacing": "Medium"
+              "spacing": "None"
             },
             {
               "type": "ColumnSet",
-              "spacing": "Small",
+              "spacing": "None",
               "columns": [
                 {
                   "type": "Column",
@@ -783,17 +906,30 @@ namespace System_Monitor.Services
                   ]
                 }
               ]
+                }
+              ]
             },
             {
+              "type": "Container",
+              "id": "layoutGapBeforeNetwork",
+              "height": "stretch",
+              "spacing": "None",
+              "items": []
+            },
+            {
+              "type": "Container",
+              "spacing": "None",
+              "items": [
+                {
               "type": "TextBlock",
               "text": "Network",
               "weight": "Bolder",
               "size": "Medium",
-              "spacing": "Medium"
+              "spacing": "None"
             },
             {
               "type": "ColumnSet",
-              "spacing": "Small",
+              "spacing": "None",
               "columns": [
                 {
                   "type": "Column",
@@ -834,6 +970,15 @@ namespace System_Monitor.Services
                   ]
                 }
               ]
+                }
+              ]
+            },
+            {
+              "type": "Container",
+              "id": "layoutGapTrailing",
+              "height": "stretch",
+              "spacing": "None",
+              "items": []
             }
           ]
         }

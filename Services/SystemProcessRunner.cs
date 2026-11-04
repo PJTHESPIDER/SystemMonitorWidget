@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 using System.Threading;
@@ -124,6 +125,125 @@ namespace System_Monitor.Services
         /// when the OS refused to terminate it, in which case the child is
         /// still running and the caller must say so.
         /// </returns>
+        /// <summary>
+        /// Launches a process as Administrator via the "runas" verb and waits
+        /// for it to exit. Used for installers that require elevation.
+        ///
+        /// Because the elevated process is a GUI wizard, standard output and
+        /// error are not captured (UseShellExecute = true). Only the exit code
+        /// matters.
+        ///
+        /// Cancellation: since the user interacts with a GUI, cancellation here
+        /// means the caller (e.g., the coordinate) gave up — but the elevated
+        /// process may still be running. We cannot force-kill an elevated process
+        /// from a non-elevated parent, so we report cancellation without killing.
+        /// </summary>
+        public async Task<ElevatedRunResult> RunElevatedAsync(
+            string fileName,
+            string arguments,
+            CancellationToken cancellationToken = default)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                UseShellExecute = true,
+                Verb = "runas", // Elevate via UAC prompt
+                // With UseShellExecute=true and Verb="runas", there is no
+                // stdout/stderr redirect — the OS handles the elevation prompt.
+            };
+
+            var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+
+            try
+            {
+                if (!process.Start())
+                {
+                    return new ElevatedRunResult(
+                        ExitCode: null,
+                        FailureReason: "Process did not start.",
+                        WasCancelled: false,
+                        RebootRequired: false);
+                }
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                // The user declined the UAC prompt.
+                return new ElevatedRunResult(
+                    ExitCode: null,
+                    FailureReason: $"Elevation denied or unavailable: {ex.Message}",
+                    WasCancelled: true,
+                    RebootRequired: false);
+            }
+            catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+            {
+                // Win32 error 1223 = ERROR_CANCELLED_BY_USER — the user
+                // declined the UAC elevation dialog. This is cancellation,
+                // not a launch failure.
+                return new ElevatedRunResult(
+                    ExitCode: null,
+                    FailureReason: "User declined the UAC elevation prompt",
+                    WasCancelled: true,
+                    RebootRequired: false);
+            }
+            catch (Exception ex)
+            {
+                process.Dispose();
+                return new ElevatedRunResult(
+                    ExitCode: null,
+                    FailureReason: $"Failed to launch installer: {ex.Message}",
+                    WasCancelled: false,
+                    RebootRequired: false);
+            }
+
+            // Wait for the process to exit. For a GUI installer, this blocks
+            // until the user dismisses the wizard.
+            using var registration = cancellationToken.Register(() =>
+            {
+                // Cannot force-kill an elevated child — report cancellation
+                // without killing. The elevated process may still be running.
+            });
+
+            try
+            {
+                await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // The caller cancelled. We cannot kill the elevated process,
+                // but we report the cancellation. The ExitCode may or may not
+                // be available depending on whether the process exits after
+                // our wait is cancelled.
+                var exitCode = process.HasExited ? process.ExitCode : (int?)null;
+                process.Dispose();
+                return new ElevatedRunResult(
+                    ExitCode: exitCode,
+                    FailureReason: "Setup was cancelled by the user while waiting for the installer",
+                    WasCancelled: true,
+                    RebootRequired: false);
+            }
+            finally
+            {
+                if (!process.HasExited)
+                {
+                    // The process is still running (e.g., a long-running wizard).
+                    // We've been cancelled but cannot kill an elevated child.
+                    // Dispose will not kill it.
+                }
+            }
+
+            var finalExitCode = process.ExitCode;
+            var reboot = finalExitCode == 3010;
+
+            process.Dispose();
+
+            return new ElevatedRunResult(
+                ExitCode: finalExitCode,
+                FailureReason: null,
+                WasCancelled: false,
+                RebootRequired: reboot);
+        }
+
         private static bool TryKill(Process process)
         {
             try

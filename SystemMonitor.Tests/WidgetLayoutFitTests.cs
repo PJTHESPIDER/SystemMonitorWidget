@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System_Monitor.Services;
 using Xunit;
 
@@ -163,7 +165,11 @@ public class WidgetLayoutFitTests
         // value and then the action buttons off the bottom of the card.
         var template = WidgetTemplates.BuildTemplate(size);
 
-        Assert.DoesNotContain("\"actions\"", template);
+        // Root-level "actions" array is forbidden (it renders as a separate
+        // row after the body). ActionSet elements inside the body are allowed.
+        using var document = System.Text.Json.JsonDocument.Parse(template);
+        Assert.False(document.RootElement.TryGetProperty("actions", out _),
+            "Template has a root-level actions array which will be rendered as a separate row and compete for height.");
         Assert.DoesNotContain("Action.Execute", template);
     }
 
@@ -178,6 +184,176 @@ public class WidgetLayoutFitTests
         using var document = System.Text.Json.JsonDocument.Parse(template);
 
         Assert.Equal("AdaptiveCard", document.RootElement.GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public void SmallLayoutKeepsItsExistingSectionGap()
+    {
+        AssertSizeLayout(
+            WidgetLayoutSize.Small,
+            "Small",
+            new[] { "${cpu}", "${gpu}", "${ramCapacityCompact}", "${diskCapacityCompact}" });
+    }
+
+    [Theory]
+    [InlineData(WidgetLayoutSize.Medium)]
+    [InlineData(WidgetLayoutSize.Large)]
+    public void SectionMetricsStayTightToTheirHeadings(WidgetLayoutSize size)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(WidgetTemplates.BuildTemplate(size));
+        var body = document.RootElement.GetProperty("body");
+        var metricBindings = new List<string>
+        {
+            "${cpu}",
+            "${gpu}",
+            "${ramCapacityCompact}",
+            "${diskCapacityCompact}",
+        };
+
+        if (size == WidgetLayoutSize.Large)
+        {
+            metricBindings.Add("${netDown}");
+            metricBindings.Add("${netUp}");
+        }
+
+        foreach (var binding in metricBindings)
+        {
+            var metrics = FindNestedTextElement(body, binding);
+            Assert.Equal("None", metrics.GetProperty("spacing").GetString());
+        }
+    }
+
+    [Theory]
+    [InlineData(
+        WidgetLayoutSize.Medium,
+        new[] { "layoutGapLeading", "layoutGapBeforeGpu", "layoutGapBeforeMemory", "layoutGapBeforeStorage", "layoutGapTrailing" },
+        4)]
+    [InlineData(
+        WidgetLayoutSize.Large,
+        new[] { "layoutGapLeading", "layoutGapBeforeGpu", "layoutGapBeforeMemory", "layoutGapBeforeStorage", "layoutGapBeforeNetwork", "layoutGapTrailing" },
+        5)]
+    public void MediumAndLargeDistributeAvailableHeightIntoStretchGaps(
+        WidgetLayoutSize size,
+        string[] expectedGapIds,
+        int expectedCategoryCount)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(WidgetTemplates.BuildTemplate(size));
+        var root = document.RootElement;
+        var body = root.GetProperty("body");
+        var bodyElements = body.EnumerateArray().ToArray();
+        var categories = bodyElements
+            .Where(element =>
+                element.TryGetProperty("type", out var type)
+                && type.GetString() == "Container"
+                && element.TryGetProperty("items", out var items)
+                && items.GetArrayLength() > 0)
+            .ToArray();
+        var gaps = bodyElements
+            .Where(element =>
+                element.TryGetProperty("type", out var type)
+                && type.GetString() == "Container"
+                && element.TryGetProperty("id", out var id)
+                && id.GetString()!.StartsWith("layoutGap", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.Equal(expectedCategoryCount, categories.Length);
+        Assert.Equal("Center", root.GetProperty("verticalContentAlignment").GetString());
+        Assert.Equal(
+            expectedGapIds,
+            gaps.Select(gap => gap.GetProperty("id").GetString()).ToArray());
+
+        foreach (var gap in gaps)
+        {
+            Assert.Equal("stretch", gap.GetProperty("height").GetString());
+            Assert.Equal("None", gap.GetProperty("spacing").GetString());
+            Assert.Empty(gap.GetProperty("items").EnumerateArray());
+            Assert.False(gap.TryGetProperty("padding", out _));
+        }
+
+        foreach (var category in categories)
+        {
+            Assert.Equal("None", category.GetProperty("spacing").GetString());
+            Assert.False(category.TryGetProperty("padding", out _));
+            Assert.All(
+                category.GetProperty("items").EnumerateArray(),
+                item => Assert.Equal("None", item.GetProperty("spacing").GetString()));
+        }
+
+        var conditionalGpuGap = gaps.First(gap =>
+            gap.GetProperty("id").GetString() == "layoutGapBeforeGpu");
+        Assert.Equal(
+            "${gpuSectionPresent}",
+            conditionalGpuGap.GetProperty("$when").GetString());
+
+        var gpuCategory = categories.First(category =>
+            ContainsText(category, size == WidgetLayoutSize.Medium
+                ? "GPU — ${gpuNameCompact}"
+                : "Graphics (GPU) — ${gpuNameCompact}"));
+        Assert.Equal("${gpuSectionPresent}", gpuCategory.GetProperty("$when").GetString());
+    }
+
+    [Theory]
+    [InlineData(WidgetLayoutSize.Small)]
+    [InlineData(WidgetLayoutSize.Medium)]
+    [InlineData(WidgetLayoutSize.Large)]
+    public void ConditionalRowsAreRemovedWithoutLeavingLayoutPlaceholders(WidgetLayoutSize size)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(WidgetTemplates.BuildTemplate(size));
+        var root = document.RootElement;
+        var body = root.GetProperty("body");
+
+        Assert.Equal("Center", root.GetProperty("verticalContentAlignment").GetString());
+
+        var staleNotice = FindBodyElement(body, "Telemetry is stale");
+        Assert.Equal("${sampleIsStale}", staleNotice.GetProperty("$when").GetString());
+
+        Assert.DoesNotContain(Descendants(body), element =>
+            element.ValueKind == System.Text.Json.JsonValueKind.Object
+            && element.TryGetProperty("type", out var type)
+            && type.GetString() == "Spacer");
+        Assert.DoesNotContain(Descendants(body), element =>
+            element.ValueKind == System.Text.Json.JsonValueKind.Object
+            && element.TryGetProperty("type", out var type)
+            && type.GetString() == "TextBlock"
+            && element.TryGetProperty("text", out var text)
+            && string.IsNullOrWhiteSpace(text.GetString()));
+
+        var cpuTemperatureColumn = Descendants(body).First(element =>
+            element.ValueKind == System.Text.Json.JsonValueKind.Object
+            && element.TryGetProperty("type", out var type)
+            && type.GetString() == "Column"
+            && ContainsText(element, "${cpuTemp}"));
+        Assert.Equal("${cpuTempShow}", cpuTemperatureColumn.GetProperty("$when").GetString());
+
+        if (size == WidgetLayoutSize.Small)
+        {
+            var gpuRow = FindBodyElement(body, "${gpuMemoryCapacityCompact}");
+            Assert.Equal("${gpuDevicePresent}", gpuRow.GetProperty("$when").GetString());
+        }
+        else
+        {
+            var gpuHeading = FindNestedTextElement(
+                body,
+                size == WidgetLayoutSize.Medium
+                    ? "GPU — ${gpuNameCompact}"
+                    : "Graphics (GPU) — ${gpuNameCompact}");
+            Assert.Equal("${gpuDevicePresent}", gpuHeading.GetProperty("$when").GetString());
+
+            var gpuMetrics = Descendants(body).First(element =>
+                element.ValueKind == System.Text.Json.JsonValueKind.Object
+                && element.TryGetProperty("type", out var type)
+                && type.GetString() == "ColumnSet"
+                && ContainsText(element, "${gpuMemoryCapacityCompact}"));
+            Assert.Equal("${gpuDevicePresent}", gpuMetrics.GetProperty("$when").GetString());
+        }
+
+        var extraCount = size == WidgetLayoutSize.Large ? 3 : size == WidgetLayoutSize.Medium ? 1 : 0;
+        foreach (var extraIndex in Enumerable.Range(1, extraCount))
+        {
+            var extra = FindNestedTextElement(body, $"Other GPU — ${{gpuExtra{extraIndex}}}");
+            Assert.Equal($"${{gpuExtra{extraIndex}Available}}", extra.GetProperty("$when").GetString());
+            Assert.Equal("None", extra.GetProperty("spacing").GetString());
+        }
     }
 
     // =====================================================================
@@ -211,6 +387,96 @@ public class WidgetLayoutFitTests
     // =====================================================================
     // Helpers
     // =====================================================================
+
+    private static void AssertSizeLayout(
+        WidgetLayoutSize size,
+        string peerGap,
+        string[] peerSections)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(WidgetTemplates.BuildTemplate(size));
+        var root = document.RootElement;
+        var body = root.GetProperty("body");
+
+        Assert.Equal("Center", root.GetProperty("verticalContentAlignment").GetString());
+        if (size == WidgetLayoutSize.Medium)
+        {
+            var cpuHeading = FindNestedTextElement(body, "CPU — ${cpuNameCompact}");
+            Assert.Equal("None", cpuHeading.GetProperty("spacing").GetString());
+        }
+        else if (size == WidgetLayoutSize.Large)
+        {
+            var cpuHeading = FindNestedTextElement(body, "Processor (CPU) — ${cpuNameCompact}");
+            Assert.Equal("None", cpuHeading.GetProperty("spacing").GetString());
+        }
+
+        foreach (var section in peerSections)
+        {
+            var element = FindBodyElement(body, section);
+            Assert.Equal(peerGap, element.GetProperty("spacing").GetString());
+        }
+    }
+
+    private static System.Text.Json.JsonElement FindBodyElement(
+        System.Text.Json.JsonElement body,
+        string text) =>
+        body.EnumerateArray().First(element => ContainsText(element, text));
+
+    private static System.Text.Json.JsonElement FindNestedTextElement(
+        System.Text.Json.JsonElement element,
+        string text) =>
+        Descendants(element).First(candidate =>
+            candidate.ValueKind == System.Text.Json.JsonValueKind.Object
+            && candidate.TryGetProperty("text", out var value)
+            && value.ValueKind == System.Text.Json.JsonValueKind.String
+            && value.GetString()!.Contains(text, StringComparison.Ordinal));
+
+    private static bool ContainsText(System.Text.Json.JsonElement element, string text)
+    {
+        if (element.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.NameEquals("text")
+                    && property.Value.ValueKind == System.Text.Json.JsonValueKind.String
+                    && property.Value.GetString()!.Contains(text, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                if (ContainsText(property.Value, text))
+                    return true;
+            }
+        }
+        else if (element.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            return element.EnumerateArray().Any(child => ContainsText(child, text));
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<System.Text.Json.JsonElement> Descendants(
+        System.Text.Json.JsonElement element)
+    {
+        yield return element;
+
+        if (element.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                foreach (var descendant in Descendants(property.Value))
+                    yield return descendant;
+            }
+        }
+        else if (element.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var child in element.EnumerateArray())
+            {
+                foreach (var descendant in Descendants(child))
+                    yield return descendant;
+            }
+        }
+    }
 
     /// <summary>
     /// The JSON of the GPU row — the ColumnSet that binds the GPU usage,

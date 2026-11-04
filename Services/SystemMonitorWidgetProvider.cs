@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Windows.Widgets;
@@ -10,6 +11,50 @@ using System_Monitor.Models;
 
 namespace System_Monitor.Services
 {
+    /// <summary>
+    /// Widget provider for the System Monitor Windows Widget.
+    ///
+    /// <para><b>Shared State Ownership</b></para>
+    ///
+    /// <list type="bullet">
+    /// <item><description>
+    /// <b>Setup state is machine-wide</b>: The CPU temperature setup state is
+    /// derived from <see cref="CpuTemperatureSetupCoordinator"/> and cached
+    /// in the process-wide static field <c>_lastSetupResult</c>. All widget
+    /// instances in the process see the same setup status because the PawnIO
+    /// installation is a machine-wide concern. The coordinator uses a
+    /// cross-process mutex (<c>Global\SystemMonitor_PawnIoSetup</c>) to
+    /// serialize setup across processes.
+    /// </description></item>
+    /// <item><description>
+    /// <b>Per-widget preferences</b>: The <c>ShowCpuTemperature</c> flag and
+    /// GPU selection are stored per-widget in the host's <c>CustomState</c> JSON
+    /// (serialized via <see cref="SerializeCustomState"/>). They are NOT
+    /// machine-wide — each widget instance has its own preference.
+    /// </description></item>
+    /// <item><description>
+    /// <b>Transient states are not persisted</b>: <c>SetupInProgress</c> and
+    /// other transient states are not written to <c>CustomState</c>. On
+    /// provider restart, the coordinator is re-queried to rebuild the cached
+    /// setup state.
+    /// </description></item>
+    /// <item><description>
+    /// <b>Execution gate</b>: <see cref="SetupExecutionEnabled"/> defaults to
+    /// <c>false</c> in production. When disabled, the widget explains that
+    /// setup is not enabled in this candidate rather than silently no-oping
+    /// or claiming installation started. Tests can override the property to
+    /// enable execution.
+    /// </description></item>
+    /// <item><description>
+    /// <b>Pipeline and sensor backend are process-wide</b>: The
+    /// <see cref="SystemMetricsService"/> and <see cref="UpdatePipeline{T}"/>
+    /// are static and shared across all widget instances. They are started
+    /// when the first widget activates and stopped when the last widget
+    /// deactivates. <see cref="Dispose"/> does nothing — resources are
+    /// released by <see cref="ShutdownAsync"/> after the last widget is gone.
+    /// </description></item>
+    /// </list>
+    /// </summary>
     [ComVisible(true)]
     [Guid("f72c45b3-9fa6-4155-82de-ab4ccf67cdb8")]
     public class SystemMonitorWidgetProvider : IWidgetProvider, IWidgetProvider2, IDisposable
@@ -69,6 +114,7 @@ namespace System_Monitor.Services
                     foreach (var widgetInfo in existingWidgets)
                     {
                         var context = widgetInfo.WidgetContext;
+                        var persisted = ReadPersistedCustomState(widgetInfo.CustomState);
                         RunningWidgets.Set(new WidgetEntry<WidgetSize>
                         {
                             WidgetId = context.Id,
@@ -77,8 +123,10 @@ namespace System_Monitor.Services
                             IsActive = context.IsActive,
                             // The host persists the selection for us, so a
                             // widget that was pinned before the provider
-                            // restarted keeps its chosen device.
-                            SelectedGpuInstanceId = ReadPersistedSelection(widgetInfo.CustomState),
+                            // restarted keeps its chosen device and CPU
+                            // temperature visibility preference.
+                            SelectedGpuInstanceId = persisted.GpuInstanceId,
+                            ShowCpuTemperature = persisted.ShowCpuTemperature,
                         });
                     }
 
@@ -166,7 +214,8 @@ namespace System_Monitor.Services
                 WidgetId = widgetId,
                 WidgetName = widgetContext.DefinitionId,
                 Size = widgetContext.Size,
-                IsActive = widgetContext.IsActive
+                IsActive = widgetContext.IsActive,
+                ShowCpuTemperature = true,
             };
 
             RunningWidgets.Set(entry);
@@ -205,7 +254,8 @@ namespace System_Monitor.Services
                     WidgetId = widgetId,
                     WidgetName = widgetContext.DefinitionId,
                     Size = widgetContext.Size,
-                    IsActive = true
+                    IsActive = true,
+                    ShowCpuTemperature = true,
                 });
             }
 
@@ -217,7 +267,8 @@ namespace System_Monitor.Services
                     WidgetId = widgetId,
                     WidgetName = widgetContext.DefinitionId,
                     Size = widgetContext.Size,
-                    IsActive = true
+                    IsActive = true,
+                    ShowCpuTemperature = true,
                 });
         }
 
@@ -244,32 +295,111 @@ namespace System_Monitor.Services
         /// The widget host asks for the widget's customization experience.
         ///
         /// <para>
-        /// This provider does not use a separate customization card: the
-        /// device picker is a set of ordinary actions on the widget itself,
-        /// so there is no separate customization payload to serve. The
-        /// callback is implemented because the interface requires it, and
-        /// because the host may ask for the settings payload at any time —
-        /// the regular template already carries the picker, so the
-        /// customization request is answered by republishing the widget.
+        /// This provider uses a dedicated customization template that contains
+        /// the CPU temperature setup status, the Show/Hide CPU temperature
+        /// toggle, and the Set up CPU temperature action. The normal telemetry
+        /// templates no longer contain any setup UI.
         /// </para>
         /// </summary>
         public void OnCustomizationRequested(WidgetCustomizationRequestedArgs customizationRequestedArgs)
         {
             var widgetId = customizationRequestedArgs.WidgetContext.Id;
 
-            if (RunningWidgets.TryGet(widgetId, out var entry) && entry is not null)
-                UpdateWidget(entry);
+            if (!RunningWidgets.TryGet(widgetId, out var entry) || entry is null)
+                return;
+
+            var snapshot = _lastSnapshot;
+            var selectionId = entry.SelectedGpuInstanceId;
+
+            // Use the customization template instead of the normal telemetry template.
+            var template = WidgetTemplates.GetCustomizationTemplate();
+
+            // Build the payload from the snapshot, then layer the CPU
+            // temperature setup status onto it.
+            var payload = WidgetPayloadPresenter.PresentForPublication(
+                snapshot, selectionId, Clock, entry.ShowCpuTemperature);
+
+            // Resolve the CPU temperature setup presentation state and
+            // merge it into the payload.
+            var setupState = ResolveCpuTemperatureSetupState();
+            WidgetPayloadPresenter.PresentCpuTemperatureSetupState(payload, setupState);
+
+            var data = payload.ToJson();
+
+            var updateOptions = new WidgetUpdateRequestOptions(widgetId)
+            {
+                Template = template,
+                Data = data,
+                // Preserve the same CustomState (GPU selection + CPU temp preference).
+                CustomState = SerializeCustomState(
+                    selectionId,
+                    entry.ShowCpuTemperature),
+            };
+
+            WidgetManager.GetDefault().UpdateWidget(updateOptions);
         }
 
         public void OnActionInvoked(WidgetActionInvokedArgs actionInvokedArgs)
         {
-            // The templates carry no root-level actions, so the host has
-            // nothing to invoke. The callback is implemented because the
-            // interface requires it.
+            // The templates carry no root-level actions array, so the host
+            // has nothing to invoke from an action row. The callback is
+            // implemented because the interface requires it.
             //
-            // The widget refreshes on its own interval, and the device
-            // picker that used to live here was removed with the action
-            // row: it cost the card the height its figures needed.
+            // Phase 3 actions are delivered through inline template controls
+            // (Action.Submit buttons). The action data is a JSON object with
+            // an "action" property identifying the requested operation.
+            var widgetId = actionInvokedArgs.WidgetContext.Id;
+            if (string.IsNullOrEmpty(widgetId))
+                return;
+
+            string actionName = string.Empty;
+            var actionObj = actionInvokedArgs.Data;
+            if (actionObj is not null)
+            {
+                // Action.Submit sends a JSON object with the data payload.
+                // Try to extract the "action" property.
+                var json = actionObj.ToString();
+                if (!string.IsNullOrEmpty(json))
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(json);
+                        if (doc.RootElement.TryGetProperty("action", out var actionProp))
+                        {
+                            actionName = actionProp.GetString() ?? string.Empty;
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                        // Not JSON, fall back to string comparison.
+                        actionName = json;
+                    }
+                }
+            }
+
+            if (actionName == "toggleCpuTemp" && RunningWidgets.TryGet(widgetId, out var entry) && entry is not null)
+            {
+                var newValue = !entry.ShowCpuTemperature;
+                RunningWidgets.TrySetCpuTempPreference(widgetId, newValue);
+                UpdateWidget(RunningWidgets.GetAll().FirstOrDefault(e => e.WidgetId == widgetId)
+                    ?? entry);
+            }
+
+            // The "Set up CPU temperature..." action requests the setup flow.
+            // Execution is gated by SetupExecutionEnabled: when disabled, the
+            // flow must NOT start. Instead, the widget explains that setup is
+            // not enabled in this candidate (surfaced via the
+            // cpuTempSetupStatus / cpuTempSetupNotEnabled payload keys).
+            // When enabled, the background setup coordinator runs the flow
+            // and the result is surfaced through the status text.
+            if (actionName == "setupCpuTemperature" && !SetupExecutionEnabled)
+            {
+                // Deliberately do NOT start any setup flow. The widget
+                // republishes with the "Setup is not enabled in this
+                // candidate" status via ResolveCpuTemperatureSetupState.
+                if (RunningWidgets.TryGet(widgetId, out var disabledEntry) && disabledEntry is not null)
+                    UpdateWidget(disabledEntry);
+            }
         }
 
         public void OnWidgetContextChanged(WidgetContextChangedArgs contextChangedArgs)
@@ -397,9 +527,17 @@ namespace System_Monitor.Services
 
                 var template = WidgetTemplates.BuildTemplate(ToLayoutSize(widget.Size));
 
-                var data = WidgetPayloadPresenter
-                    .PresentForPublication(snapshot, selectionId, Clock)
-                    .ToJson();
+                // Build the payload from the snapshot, then layer the CPU
+                // temperature setup status onto it.
+                var payload = WidgetPayloadPresenter.PresentForPublication(
+                    snapshot, selectionId, Clock, widget.ShowCpuTemperature);
+
+                // Resolve the CPU temperature setup presentation state and
+                // merge it into the payload.
+                var setupState = ResolveCpuTemperatureSetupState();
+                WidgetPayloadPresenter.PresentCpuTemperatureSetupState(payload, setupState);
+
+                var data = payload.ToJson();
 
                 var updateOptions = new WidgetUpdateRequestOptions(widget.WidgetId)
                 {
@@ -407,8 +545,11 @@ namespace System_Monitor.Services
                     Data = data,
                     // The host persists this per widget and hands it back on
                     // the next run, so the user's choice survives a restart
-                    // of the provider.
-                    CustomState = selectionId ?? string.Empty,
+                    // of the provider. The state now carries both the GPU
+                    // selection and the "Show CPU temperature" preference.
+                    CustomState = SerializeCustomState(
+                        selectionId,
+                        widget.ShowCpuTemperature),
                 };
 
                 WidgetManager.GetDefault().UpdateWidget(updateOptions);
@@ -445,24 +586,175 @@ namespace System_Monitor.Services
             _ => WidgetLayoutSize.Medium,
         };
 
+        #region CPU temperature setup state and execution policy
+
+        /// <summary>
+        /// Whether the setup flow is allowed to execute.
+        ///
+        /// <para>
+        /// This is the execution policy gate. Production defaults to disabled
+        /// at this stage, so the widget explains that setup is not enabled in
+        /// this candidate rather than silently no-oping or claiming
+        /// installation started.
+        /// </para>
+        ///
+        /// <para>
+        /// The property is protected so that tests can override it without
+        /// reaching into production plumbing. The provider itself never writes
+        /// to it.
+        /// </para>
+        /// </summary>
+        protected bool SetupExecutionEnabled { get; set; } = false;
+
+        /// <summary>
+        /// The most recent setup result, held so the widget can reflect the
+        /// outcome of a setup attempt without re-evaluating the coordinator.
+        /// A background refresh keeps this current.
+        /// </summary>
+        private static PawnIoSetupResult? _lastSetupResult;
+
+        /// <summary>
+        /// Resolves the CPU temperature setup presentation state for the widget.
+        ///
+        /// <para>
+        /// When execution is disabled, the state is
+        /// <see cref="CpuTempSetupPresentationState.SetupNotEnabled"/> and the
+        /// widget explains that setup is not enabled in this candidate.
+        /// </para>
+        ///
+        /// <para>
+        /// When execution is enabled, the state reflects the last known setup
+        /// result and whether the CPU temperature is currently available from
+        /// the sensor backend.
+        /// </para>
+        /// </summary>
+        private CpuTemperatureSetupState ResolveCpuTemperatureSetupState()
+        {
+            // If execution is disabled, always surface the not-enabled state.
+            // The widget explains that setup is not enabled in this candidate
+            // rather than silently no-oping.
+            if (!SetupExecutionEnabled)
+            {
+                return new CpuTemperatureSetupState(
+                    CpuTempSetupPresentationState.SetupNotEnabled,
+                    "Setup is not enabled in this candidate.",
+                    CanRetry: false,
+                    DateTimeOffset.UtcNow);
+            }
+
+            // Check whether the CPU temperature is already available.
+            var currentlyAvailable = _lastSnapshot?.CpuTemperatureC is not null
+                && _lastSnapshot.CpuTemperatureC.Status == MeasurementStatus.Available;
+
+            var result = _lastSetupResult;
+
+            return CpuTemperatureSetupStateMapper.FromSetupResult(
+                result,
+                SetupExecutionEnabled,
+                currentlyAvailable);
+        }
+
+        #endregion
+
+        #region CustomState serialization
+
+        /// <summary>
+        /// The persisted per-widget state, serialized as JSON in the host's
+        /// CustomState field.
+        /// </summary>
+        private sealed class PersistedWidgetState
+        {
+            public string? GpuInstanceId { get; set; }
+            public bool? ShowCpuTemperature { get; set; }
+        }
+
+        /// <summary>
+        /// Reads the persisted widget state from the host's CustomState.
+        ///
+        /// <para>
+        /// The CustomState format was extended from a bare GPU instance id
+        /// string to a JSON object carrying both the GPU selection and the
+        /// "Show CPU temperature" preference. This method is backward
+        /// compatible: when the CustomState is not JSON (as it was in earlier
+        /// versions), it is parsed as the old bare GPU instance id.
+        /// </para>
+        ///
+        /// <para>
+        /// A value that cannot be read is ignored rather than treated as a
+        /// selection: an unresolvable value is worse than no selection,
+        /// because it would make the widget fall back to the default policy
+        /// on every start.
+        /// </para>
+        /// </summary>
+        private static (string? GpuInstanceId, bool ShowCpuTemperature) ReadPersistedCustomState(string? customState)
+        {
+            if (string.IsNullOrWhiteSpace(customState))
+                return (null, true);
+
+            var trimmed = customState.Trim();
+
+            // Try JSON deserialization first (new format).
+            try
+            {
+                var state = JsonSerializer.Deserialize<PersistedWidgetState>(trimmed);
+                if (state is not null)
+                {
+                    return (
+                        string.IsNullOrWhiteSpace(state.GpuInstanceId) ? null : state.GpuInstanceId,
+                        state.ShowCpuTemperature ?? true);
+                }
+            }
+            catch (JsonException)
+            {
+                // Not JSON: fall through to the legacy bare-string format.
+            }
+
+            // Legacy format: the CustomState was just the GPU instance id.
+            return (trimmed.Length == 0 ? null : trimmed, true);
+        }
+
+        /// <summary>
+        /// Serializes the per-widget state to the CustomState format.
+        ///
+        /// <para>
+        /// The format is a compact JSON object:
+        /// <c>{"gpu":"INSTANCE_ID","showCpuTemp":true}</c>. The GPU instance id
+        /// is omitted when null, and the ShowCpuTemperature preference is
+        /// included so the host can persist it without a schema change.
+        /// </para>
+        /// </summary>
+        private static string SerializeCustomState(string? gpuInstanceId, bool showCpuTemperature)
+        {
+            var state = new PersistedWidgetState
+            {
+                GpuInstanceId = gpuInstanceId,
+                ShowCpuTemperature = showCpuTemperature,
+            };
+            return JsonSerializer.Serialize(state);
+        }
+
+        #endregion
+
         /// <summary>
         /// Reads the persisted selection from the host's custom state.
         ///
         /// <para>
-        /// The custom state holds the instance id of the selected device, or
-        /// nothing when no device was selected. A value that cannot be read
-        /// is ignored rather than treated as a selection: an unresolvable
-        /// selection is worse than no selection, because it would make the
-        /// widget fall back to the default policy on every start.
+        /// The custom state now holds a JSON object carrying both the GPU
+        /// instance id and the "Show CPU temperature" preference. For backward
+        /// compatibility, a bare (non-JSON) string is still interpreted as
+        /// the GPU instance id from the legacy format.
+        /// </para>
+        ///
+        /// <para>
+        /// This overload is retained for callers that only need the GPU
+        /// selection; callers that need the full persisted state should use
+        /// <see cref="ReadPersistedCustomState"/>.
         /// </para>
         /// </summary>
         private static string? ReadPersistedSelection(string? customState)
         {
-            if (string.IsNullOrWhiteSpace(customState))
-                return null;
-
-            var trimmed = customState.Trim();
-            return trimmed.Length == 0 ? null : trimmed;
+            var (gpuId, _) = ReadPersistedCustomState(customState);
+            return gpuId;
         }
 
         /// <summary>
