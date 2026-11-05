@@ -35,10 +35,12 @@ This machine covers two of the configurations in section 3:
 **Intel CPU + Intel GPU** (partially — the integrated part) and
 **Intel integrated GPU + NVIDIA GPU** (fully).
 
-The last three device-level readings confirm the machine's identity and
-were taken from the diagnostic inventory export
-(`SystemMonitor.exe --export-diagnostics <path>`), which runs the real
-collection path end to end.
+The final hardware-specific readings were collected through the opt-in
+diagnostic inventory export (`SystemMonitor.exe --export-diagnostics
+<path>`), which runs the real collection path end to end. The raw
+machine-specific inventory exports have been removed from the current
+tree; sanitized validation conclusions remain in this report, and raw
+device identifiers are intentionally omitted.
 
 ### 1.1 Historical live-host environment (prior candidate)
 
@@ -1140,10 +1142,13 @@ reference is irreducible: no package-removal experiment was run.
 
 ### Untracked and sensitive artifacts
 
-Untracked machine-specific diagnostic exports are under `build/inventory-*.txt`; the probe source
-and captured output are under `build/lhmprobe/`. Scratch `TestArray*` files are unrelated to the
-widget implementation. They remain untracked and were not deleted in this review. The tracked
-`Services/WidgetTemplates.cs.probe-backup` is deleted in the current checkout.
+The former tracked machine-specific diagnostic exports under
+`build/inventory-*.txt` were removed from the current tree. This does not
+remove their earlier versions from Git history. Sanitized validation
+conclusions are retained above; no raw device identifiers are reproduced.
+The probe source and captured output under `build/lhmprobe/` remain
+available for diagnostics. Scratch `TestArray*` files are unrelated to
+the widget implementation and have been removed.
 
 An ignored `build/msix-output/testcert.pfx` exists. It is untracked/ignored signing material that
 contains a private key; its contents were not read or printed. Keep it out of any commit. No
@@ -1152,8 +1157,9 @@ installed package DLL are the only source/artifact correspondence compared in th
 current source was not repackaged or installed.
 
 Ignored generated publish/package output is also present under `build/publish-temp/`,
-`build/package-root/`, and `build/msix-output/`; do not stage those outputs as source. No generated
-binary or package was deleted during this review.
+`build/package-root/`, and `build/msix-output/`; do not stage these outputs as source. No generated
+binary or package was deleted during that hardware-validation pass. A later cleanup removed the
+tracked deployment snapshots; ignored local package outputs were preserved.
 
 ### Remaining work classification
 

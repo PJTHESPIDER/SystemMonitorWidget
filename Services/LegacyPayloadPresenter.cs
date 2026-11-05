@@ -134,31 +134,6 @@ namespace System_Monitor.Services
 
         private static Measurement? MeasurementOf(DeviceReading? reading) => reading?.Measurement;
 
-        private static Measurement? BestGpuReading(MetricsSnapshot snapshot, string metric)
-        {
-            // Use the same primary-GPU choice the widget uses, so the legacy
-            // single-value keys and the per-device keys never disagree about
-            // which device they describe.
-            var primary = LhmSnapshotMapper.SelectPrimaryGpu(snapshot.Gpus);
-            if (primary is not null)
-            {
-                var primaryReading = Reading(snapshot, primary.DeviceId, metric);
-                if (primaryReading?.Measurement.Status == MeasurementStatus.Available
-                    && primaryReading.Measurement.Value.HasValue)
-                {
-                    return primaryReading.Measurement;
-                }
-            }
-
-            // The presented device has no reading for this metric. Another
-            // device's reading is not used in its place: all four legacy GPU
-            // keys describe one device, and borrowing a figure from a
-            // different card would report it under this one's name — and
-            // pairing one card's usage with another card's capacity would
-            // produce a percentage no device reports.
-            return null;
-        }
-
         private static string FormatPercent(Measurement? m) =>
             m?.Status == MeasurementStatus.Available && m.Value.HasValue
                 ? ByteFormatter.FormatPercent(m.Value.Value)

@@ -27,11 +27,13 @@ git submodule update --init --recursive   # if the repository uses submodules
 dotnet restore
 ```
 
-The repository deliberately does **not** contain any build output. The
+The repository keeps diagnostic tools, projects and validation fixtures
+under `build/`; it does not ignore that directory wholesale. The generated
 `build/package-root/`, `build/publish-temp/` and `build/msix-output/`
-directories, the `.msix` package, the signing `.pfx` and the runtime logs
-are all generated and are excluded by `.gitignore`. Everything the
-packaging script needs is created on demand.
+directories and the retired deployment snapshots are ignored by narrow
+path rules in `.gitignore`. The package outputs, signing `.pfx` and runtime
+logs are generated. Everything the packaging script needs is created on
+demand.
 
 ## 2. Build
 
@@ -254,8 +256,10 @@ log directory.
 | `systemmonitor-inventory.txt` | The opt-in inventory, describes the author's machine |
 | `*.pubxml.user` | Per-user publish state |
 
-The three `.ps1` files in `build/` are the only tracked files in that
-directory, and they are the only packaging scripts.
+`build/Create-TestMsix.ps1`, `build/install-cert.ps1` and
+`build/install-msix.ps1` are the canonical packaging workflow. Other
+tracked files under `build/` support diagnostics, hardware probes and
+validation fixtures; those are not packaging inputs.
 
 ## 7a. Driving the live Widgets board
 

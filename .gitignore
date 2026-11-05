@@ -238,6 +238,24 @@ ClientBin/
 *.jfm
 *.pfx
 *.publishsettings
+
+# Generated packaging outputs and retired deployment snapshots.
+/build/package-root/
+/build/publish-temp/
+/build/msix-output/
+/build/label-edit-deploy/
+/build/layout-rebalance-deploy/
+/build/layout-rebalance-v2-deploy/
+/build/layout-rebalance-v3-deploy/
+
+# Machine-specific diagnostic exports; keep diagnostic source and fixtures visible.
+/build/inventory-final.txt
+/build/inventory-log-unprivileged.txt
+/build/inventory-trace.txt
+/build/inventory-trace2.txt
+/build/inventory-trace3.txt
+/build/inventory-unprivileged.txt
+
 orleans.codegen.cs
 
 # Including strong name files can present a security risk
