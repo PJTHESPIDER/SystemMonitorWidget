@@ -80,9 +80,8 @@ calls linked into the cross-platform test project. These were not suppressed;
 the Release `win-x64` application build completed with zero warnings and
 errors.
 
-The suite includes the update-pipeline lifecycle regression tests, which
-guard the activation/deactivation contract described in
-`docs/refactor-plan.md`. Those tests are not optional: any change to
+The suite includes update-pipeline lifecycle regression tests that guard
+the activation/deactivation contract. Any change to
 `Services/UpdatePipeline.cs` must leave them passing.
 
 It also includes `CpuTemperatureDiagnosticsTests`, which cover the

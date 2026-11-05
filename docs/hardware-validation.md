@@ -1127,7 +1127,7 @@ and invalid available numbers.
   `SystemMonitor.Tests/SystemMonitor.Tests.csproj`; new tracker, integration,
   diagnostics, formatting, and normalization test files listed in `git status`.
 - Documentation: `README.md` (corrected feature/backend and automatic-selection summary),
-  `docs/hardware-validation.md`, `docs/refactor-plan.md`, `docs/build-and-package.md`.
+  `docs/hardware-validation.md`, `docs/build-and-package.md`.
 
 Before committing, review the full staged/unstaged implementation diff, in particular the collection
 and tracking changes, the test project package references, and the historical/current evidence

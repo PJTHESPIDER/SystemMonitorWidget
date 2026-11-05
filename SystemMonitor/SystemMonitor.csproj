@@ -73,8 +73,7 @@
     <PackageReference Include="System.Security.Permissions" Version="8.0.0" />
     <!--
       Read-only hardware sensor backend. MPL-2.0. Fully managed: the package
-      ships no native binaries or drivers. See docs/refactor-plan.md for the
-      exact version, transitive dependency list and known limitations.
+      ships no native binaries or drivers.
     -->
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
   </ItemGroup>
