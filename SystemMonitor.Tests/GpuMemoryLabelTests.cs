@@ -87,7 +87,7 @@ public class GpuMemoryLabelTests
             ReadAt);
 
         Assert.Equal(GpuMemoryLabel.Dedicated, display.Label);
-        Assert.Equal("Dedicated GPU memory", GpuMemoryPresentation.LabelText(display.Label));
+        Assert.Equal("VRAM", GpuMemoryPresentation.LabelText(display.Label));
         Assert.Contains("%", display.Display);
     }
 
@@ -107,10 +107,10 @@ public class GpuMemoryLabelTests
 
         Assert.Equal("3.7 GB / 7.5 GB (50.0%)", payload.GetText(WidgetPayloadPresenter.GpuVramKey));
         Assert.Equal(
-            GpuMemoryPresentation.DedicatedLabel,
+            "VRAM",
             payload.GetText(WidgetPayloadPresenter.GpuVramLabelKey));
         Assert.Equal(
-            GpuMemoryPresentation.DedicatedLabelCompact,
+            "VRAM",
             payload.GetText(WidgetPayloadPresenter.GpuVramLabelCompactKey));
     }
 
@@ -521,8 +521,8 @@ public class GpuMemoryLabelTests
     }
 
     [Theory]
-    [InlineData(WidgetLayoutSize.Medium, "gpuVramLabelCompact", "Dedicated memory")]
-    [InlineData(WidgetLayoutSize.Large, "gpuVramLabel", "Dedicated GPU memory")]
+    [InlineData(WidgetLayoutSize.Medium, "gpuVramLabelCompact", "VRAM")]
+    [InlineData(WidgetLayoutSize.Large, "gpuVramLabel", "VRAM")]
     public void EveryProductionSize_RendersTheLabelFromThePayload(
         WidgetLayoutSize size,
         string labelKey,
@@ -562,7 +562,7 @@ public class GpuMemoryLabelTests
 
         // The compact form drops the word "GPU" — the figure is already in
         // the GPU section — but never the claim about the pool.
-        Assert.Contains("Dedicated", GpuMemoryPresentation.CompactLabelText(GpuMemoryLabel.Dedicated));
+        Assert.Contains("VRAM", GpuMemoryPresentation.CompactLabelText(GpuMemoryLabel.Dedicated));
         Assert.Contains("Shared", GpuMemoryPresentation.CompactLabelText(GpuMemoryLabel.Shared));
 
         AssertNoHeadingClaimsDedicatedVram(

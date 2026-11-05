@@ -259,6 +259,18 @@ namespace System_Monitor.Services
         }
 
         /// <summary>
+        /// Creates the service with an injected sensor source, CPU frequency reader,
+        /// and time provider for the GPU extras tracker. For tests that need to
+        /// control the time-based retention window.
+        /// </summary>
+        internal SystemMetricsService(SystemMetrics model, NvidiaGpuFallback nvidiaFallback, ILhmSensorSource sensorSource, ICpuFrequencyReader cpuFrequencyReader, TimeProvider timeProvider)
+            : this(model, nvidiaFallback, sensorSource, cpuFrequencyReader)
+        {
+            // Replace the default tracker with one using the provided time provider
+            _gpuExtrasTracker = new GpuExtrasTracker(GpuExtrasTracker.DefaultGraceSeconds, timeProvider);
+        }
+
+        /// <summary>
         /// Creates the sensor backend. The backend performs no hardware access
         /// until its first read, so a failure here does not prevent the widget
         /// from starting.

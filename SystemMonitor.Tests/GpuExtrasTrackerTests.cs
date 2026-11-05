@@ -288,7 +288,11 @@ public class GpuExtrasTrackerTests
 
         time.Advance(TimeSpan.FromSeconds(1));
         var r4 = tracker.Update(devices, "pci-0", Snapshot(gpus: devices), null, null, null, null);
-        Assert.Empty(r4.EligibleInstanceIds); // 6s after refresh = 11s total
+        Assert.Contains("pci-1", r4.EligibleInstanceIds); // Exactly 6s after refresh
+
+        time.Advance(TimeSpan.FromTicks(1));
+        var r5 = tracker.Update(devices, "pci-0", Snapshot(gpus: devices), null, null, null, null);
+        Assert.Empty(r5.EligibleInstanceIds); // Just beyond 6s after refresh
     }
 
     [Fact]
@@ -485,7 +489,7 @@ public class GpuExtrasTrackerTests
             {
                 Read("gpu0", "LoadPercent", 10.0),
                 Read("gpu1", "LoadPercent", 5.0),
-                Read("gpu2", "LoadPercent", 3.0),
+                Read("gpu2", "LoadPercent", 5.0),
             });
         tracker.Update(devices, "pci-0", s1, null, null, null, null);
 

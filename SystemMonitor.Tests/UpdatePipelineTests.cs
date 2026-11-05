@@ -1040,11 +1040,16 @@ public sealed class SystemMetricsServiceCancellationTests
     /// <summary>
     /// Creates a SystemMetricsService with an injected fake sensor source.
     /// </summary>
-    private static SystemMetricsService CreateService(ILhmSensorSource sensorSource)
+    private static SystemMetricsService CreateService(ILhmSensorSource sensorSource, TimeProvider? timeProvider = null)
     {
         var model = new FakeModel();
         var nvidiaFallback = new NvidiaGpuFallback();
-        return new SystemMetricsService(model, nvidiaFallback, sensorSource);
+        var cpuFrequencyReader = new CpuFrequencyReader();
+        if (timeProvider != null)
+        {
+            return new SystemMetricsService(model, nvidiaFallback, sensorSource, cpuFrequencyReader, timeProvider);
+        }
+        return new SystemMetricsService(model, nvidiaFallback, sensorSource, cpuFrequencyReader);
     }
 
     private sealed class ThrowAfterServiceCollection(SystemMetricsService service) : ITransactionalMetricsCollector
@@ -1176,13 +1181,13 @@ public sealed class SystemMetricsServiceCancellationTests
         var gpu0 = NvidiaGpu("/gpu-nvidia/0", "GPU 0", "inst-0");
         var gpu1 = NvidiaGpu("/gpu-nvidia/1", "GPU 1", "inst-1");
         var source = new BlockingFakeSource(new[] { gpu0, gpu1 });
-        var service = CreateService(source);
+        var service = CreateService(source, clock);
 
         var publications = new ConcurrentQueue<string>();
 
         var pipeline = new UpdatePipeline<TestSize>(
             service, OneActiveWidget(),
-            snapshot => { var p = WidgetPayloadPresenter.Present(snapshot).ToJson(); Console.Error.WriteLine($"PUB: {p}"); publications.Enqueue(p); return p; },
+            snapshot => { var p = WidgetPayloadPresenter.Present(snapshot).ToJson(); publications.Enqueue(p); return p; },
             (payload, widget) => Task.CompletedTask,
             TimeSpan.FromMinutes(5), clock);
 
@@ -1190,45 +1195,32 @@ public sealed class SystemMetricsServiceCancellationTests
         pipeline.Start();
         await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 1));
         var payload1 = publications.First();
-        var extra1 = GetExtraAvailable(payload1, 1);
-        Console.Error.WriteLine($"GetExtraAvailable(payload1, 1) = {extra1}");
-        Assert.True(extra1);
+        Assert.True(GetExtraAvailable(payload1, 1));
+        Assert.Equal(0, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
 
-        // Deactivate BEFORE the next collection is admitted.
-        // This means no Update() call for cycle 2.
-        await WithWatchdogAsync(pipeline.DeactivateAsync());
-
-        // Reactivate and immediately collect (cycle 2).
-        pipeline.Start();
-        await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 2));
-        var payload2 = publications.ElementAt(1);
-
-        // gpu1 should still be tracked (grace not consumed by the deactivated cycle).
-        Assert.True(GetExtraAvailable(payload2, 1));
-
-        // Now simulate gpu1 losing telemetry for 3 consecutive admitted cycles.
+        // Wait until cycle 1 is complete and the coordinator is between cycles.
+        // The following deactivation therefore occurs before another collection
+        // can be admitted.
         var gpu1NoTelemetry = gpu1 with { Sensors = new List<LhmSensorDescriptor>() };
         source.SetDevices(new[] { gpu0, gpu1NoTelemetry });
+        await WithWatchdogAsync(pipeline.WaitForWaitCountAsync(1));
+        pipeline.Stop();
+        await WithWatchdogAsync(pipeline.DeactivateAsync());
+        Assert.Single(publications);
+        Assert.Equal(0, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
 
-        // Cycle 3 (failure 1)
+        // Retention is measured from the initial qualification. At the
+        // inclusive boundary the secondary is eligible; one tick later it is not.
+        clock.Advance(TimeSpan.FromSeconds(6));
+        pipeline.Start();
+        await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 2));
+        Assert.True(GetExtraAvailable(publications.ElementAt(1), 1));
+        Assert.Equal(1, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
+
+        clock.Advance(TimeSpan.FromTicks(1));
         pipeline.Start();
         await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 3));
-        Assert.True(GetExtraAvailable(publications.ElementAt(2), 1));
-
-        // Cycle 4 (failure 2)
-        pipeline.Start();
-        await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 4));
-        Assert.True(GetExtraAvailable(publications.ElementAt(3), 1));
-
-        // Cycle 5 (failure 3)
-        pipeline.Start();
-        await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 5));
-        Assert.True(GetExtraAvailable(publications.ElementAt(4), 1));
-
-        // Cycle 6 (failure 4 - grace exhausted)
-        pipeline.Start();
-        await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 6));
-        Assert.False(GetExtraAvailable(publications.ElementAt(5), 1));
+        Assert.False(GetExtraAvailable(publications.ElementAt(2), 1));
 
         await WithWatchdogAsync(pipeline.DisposeAsync().AsTask());
     }
@@ -1251,7 +1243,7 @@ public sealed class SystemMetricsServiceCancellationTests
         var gpu0 = NvidiaGpu("/gpu-nvidia/0", "GPU 0", "inst-0");
         var gpu1 = NvidiaGpu("/gpu-nvidia/1", "GPU 1", "inst-1");
         var source = new BlockingFakeSource(new[] { gpu0, gpu1 });
-        var service = CreateService(source);
+        var service = CreateService(source, clock);
         using var serviceLifetime = service;
 
         var publications = new ConcurrentQueue<string>();
@@ -1294,8 +1286,13 @@ public sealed class SystemMetricsServiceCancellationTests
         await WithWatchdogAsync(deactivateTask);
 
         // The tracker mutation was rejected with the retired snapshot.
-        // Verify: no publication happened for cycle 2.
+        // Verify the tentative failure was rolled back and no publication occurred.
         Assert.Single(publications);
+        Assert.Equal(0, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
+
+        // The rejected collection does not reset qualification time. Test the
+        // inclusive boundary after rollback, then cross it by exactly one tick.
+        clock.Advance(TimeSpan.FromSeconds(6));
 
         // Reactivate and collect (cycle 3) - failure 2
         pipeline.Start();
@@ -1312,6 +1309,8 @@ public sealed class SystemMetricsServiceCancellationTests
         pipeline.Start();
         await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 4));
         Assert.True(GetExtraAvailable(publications.ElementAt(3), 1));
+
+        clock.Advance(TimeSpan.FromTicks(1));
 
         // Cycle 6 (failure 4 exhausts grace)
         pipeline.Start();
@@ -1335,7 +1334,7 @@ public sealed class SystemMetricsServiceCancellationTests
         var gpu0 = NvidiaGpu("/gpu-nvidia/0", "GPU 0", "inst-0");
         var gpu1 = NvidiaGpu("/gpu-nvidia/1", "GPU 1", "inst-1");
         var source = new BlockingFakeSource(new[] { gpu0, gpu1 });
-        var service = CreateService(source);
+        var service = CreateService(source, clock);
         using var serviceLifetime = service;
 
         var publications = new ConcurrentQueue<string>();
@@ -1352,6 +1351,12 @@ public sealed class SystemMetricsServiceCancellationTests
         pipeline.Start();
         await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 1));
         Assert.True(GetExtraAvailable(publications.First(), 1));
+
+        // Advance clock by 6 seconds to expire the grace period for gpu1.
+        // This simulates the time passing so that subsequent failures
+        // will exhaust grace and make the GPU unavailable.
+        clock.Advance(TimeSpan.FromSeconds(6));
+        await DrainAsync();
 
         // Set gpu1 to have no telemetry BEFORE the retired cycle,
         // so the retired cycle counts as a failure and subsequent cycles
@@ -1377,8 +1382,9 @@ public sealed class SystemMetricsServiceCancellationTests
 
         // The retired snapshot is rejected and its tracker mutation rolled back.
         Assert.Single(publications);
+        Assert.Equal(0, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
 
-        // Reactivate and collect (cycle 3) - failure 2.
+        // Reactivate and collect (cycle 3) - accepted failure 1.
         pipeline.Start();
         await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 2));
         var payload3 = publications.ElementAt(1);
@@ -1387,6 +1393,7 @@ public sealed class SystemMetricsServiceCancellationTests
 
         // Rejection rolled back cycle 2; this accepted cycle is failure 1.
         Assert.True(GetExtraAvailable(payload3, 1));
+        Assert.Equal(1, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
 
         // Cycle 4 (failure 3)
         pipeline.Start();
@@ -1405,6 +1412,13 @@ public sealed class SystemMetricsServiceCancellationTests
         // Debug: check tracker state via reflection
 
         Assert.True(GetExtraAvailable(payload5, 1));
+
+        Assert.Equal(3, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
+
+        // The last qualification was at T=0. Cycles 3–5 ran at exactly T=6s,
+        // where retention is inclusive; one tick crosses the actual expiry boundary.
+        clock.Advance(TimeSpan.FromTicks(1));
+        await DrainAsync();
 
         pipeline.Start();
         await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 5));
@@ -1429,7 +1443,7 @@ public sealed class SystemMetricsServiceCancellationTests
         var gpu0 = NvidiaGpu("/gpu-nvidia/0", "GPU 0", "inst-0");
         var gpu1 = NvidiaGpu("/gpu-nvidia/1", "GPU 1", "inst-1");
         var source = new BlockingFakeSource(new[] { gpu0, gpu1 });
-        var service = CreateService(source);
+        var service = CreateService(source, clock);
         using var serviceLifetime = service;
 
         var publications = new ConcurrentQueue<string>();
@@ -1499,63 +1513,64 @@ public sealed class SystemMetricsServiceCancellationTests
         var gpu0 = NvidiaGpu("/gpu-nvidia/0", "GPU 0", "inst-0");
         var gpu1 = NvidiaGpu("/gpu-nvidia/1", "GPU 1", "inst-1");
         var source = new BlockingFakeSource(new[] { gpu0, gpu1 });
-        var service = CreateService(source);
+        var service = CreateService(source, clock);
 
         var publications = new ConcurrentQueue<string>();
+        var firstPublication = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replacementPublication = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var payloadGate = new ManualResetEventSlim(false);
+        using var builderEntered = new ManualResetEventSlim(false);
+        var buildCount = 0;
 
         var pipeline = new UpdatePipeline<TestSize>(
             service, OneActiveWidget(),
-            snapshot => { var p = WidgetPayloadPresenter.Present(snapshot).ToJson(); publications.Enqueue(p); return p; },
-            (payload, widget) => Task.CompletedTask,
+            snapshot =>
+            {
+                if (Interlocked.Increment(ref buildCount) == 2)
+                {
+                    builderEntered.Set();
+                    if (!payloadGate.Wait(Watchdog))
+                        throw new TimeoutException("Payload gate was not released.");
+                }
+                return WidgetPayloadPresenter.Present(snapshot).ToJson();
+            },
+            (payload, widget) =>
+            {
+                publications.Enqueue(payload);
+                if (publications.Count == 1) firstPublication.TrySetResult(true);
+                if (publications.Count == 2) replacementPublication.TrySetResult(true);
+                return Task.CompletedTask;
+            },
             TimeSpan.FromMinutes(5), clock);
 
         // --- Cycle 1: Initial success ---
         pipeline.Start();
-        await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 1));
+        await WithWatchdogAsync(firstPublication.Task);
         Assert.True(GetExtraAvailable(publications.First(), 1));
 
         // Set gpu1 to have no telemetry for cycle 2
         var gpu1NoTelemetry = gpu1 with { Sensors = new List<LhmSensorDescriptor>() };
         source.SetDevices(new[] { gpu0, gpu1NoTelemetry });
 
-        // --- Cycle 2: Start collection, wait for it to be admitted and waiting for interval ---
-        pipeline.Start(); // Generation 1, cycle 2
+        // The second collection is accepted before its payload builder is
+        // entered. Hold that builder, retire its generation, and start a new
+        // one while the old generation still owns the in-flight cycle.
+        pipeline.Start();
+        Assert.True(await Task.Run(() => builderEntered.Wait(Watchdog)));
+        Assert.Equal(1, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
+        Assert.Single(publications);
 
-        // Wait for the first scheduled wait (the coordinator has registered its wait for the interval)
-        await WithWatchdogAsync(pipeline.WaitForWaitCountAsync(1));
+        pipeline.Stop();
+        pipeline.Start();
+        payloadGate.Set();
 
-        // Now immediately reactivate - this creates generation 2 and retires generation 1
-        // The generation 1 collection has completed and is waiting to publish,
-        // but its generation is now retired so publication will be suppressed.
-        pipeline.Start(); // Generation 2
-
-        // Advance time to allow generation 2's collection to run
-        clock.Advance(TimeSpan.FromMinutes(6));
-
-        // Generation 2's collection should now run and publish
-        await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 2));
-
-        // We should have 2 publications: cycle 1 and cycle 2 (generation 2's cycle)
-        // The retired generation 1's cycle was suppressed.
+        // The old generation's accepted mutation remains, but its payload is
+        // suppressed. The replacement waits for it to unwind, then publishes.
+        await WithWatchdogAsync(WaitForReadCountAsync(source, 3));
+        await WithWatchdogAsync(replacementPublication.Task);
         Assert.Equal(2, publications.Count);
-
-        // Cycle 2 was rejected. This accepted cycle is failure 1.
-        pipeline.Start();
-        clock.Advance(TimeSpan.FromMinutes(6));
-        await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 3));
-        Assert.True(GetExtraAvailable(publications.ElementAt(2), 1));
-
-        // Cycle 4 (failure 3)
-        pipeline.Start();
-        clock.Advance(TimeSpan.FromMinutes(6));
-        await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 4));
-        Assert.True(GetExtraAvailable(publications.ElementAt(3), 1));
-
-        // Cycle 5 (failure 4 - grace exhausted)
-        pipeline.Start();
-        clock.Advance(TimeSpan.FromMinutes(6));
-        await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 5));
-        Assert.False(GetExtraAvailable(publications.ElementAt(4), 1));
+        Assert.Equal(2, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
+        Assert.True(GetExtraAvailable(publications.ElementAt(1), 1));
 
         await WithWatchdogAsync(pipeline.DisposeAsync().AsTask());
     }
@@ -1576,7 +1591,7 @@ public sealed class SystemMetricsServiceCancellationTests
         var gpu0 = NvidiaGpu("/gpu-nvidia/0", "GPU 0", "inst-0");
         var gpu1 = NvidiaGpu("/gpu-nvidia/1", "GPU 1", "inst-1");
         var source = new BlockingFakeSource(new[] { gpu0, gpu1 });
-        var service = CreateService(source);
+        var service = CreateService(source, clock);
 
         var publications = new ConcurrentQueue<string>();
 
@@ -1591,14 +1606,16 @@ public sealed class SystemMetricsServiceCancellationTests
         await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 1));
         Assert.True(GetExtraAvailable(publications.First(), 1));
 
+        // Put the later collection exactly at the inclusive retention boundary.
+        clock.Advance(TimeSpan.FromSeconds(6));
+
         // --- Cycle 2: gpu1 loses telemetry (failure 1) ---
         var gpu1NoTelemetry = gpu1 with { Sensors = new List<LhmSensorDescriptor>() };
         source.SetDevices(new[] { gpu0, gpu1NoTelemetry });
         pipeline.Start();
         await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 2));
         Assert.True(GetExtraAvailable(publications.ElementAt(1), 1));
-
-        // Debug: check tracker state after cycle 2
+        Assert.Equal(1, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
 
         // Deactivate and fully await quiescence.
         await WithWatchdogAsync(pipeline.DeactivateAsync());
@@ -1614,10 +1631,13 @@ public sealed class SystemMetricsServiceCancellationTests
         pipeline.Start();
         await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 4));
         Assert.True(GetExtraAvailable(publications.ElementAt(3), 1));
+        Assert.Equal(3, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
 
+        clock.Advance(TimeSpan.FromTicks(1));
         pipeline.Start();
         await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 5));
         Assert.False(GetExtraAvailable(publications.ElementAt(4), 1));
+        Assert.Equal(4, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
 
         await WithWatchdogAsync(pipeline.DisposeAsync().AsTask());
     }
@@ -1625,10 +1645,11 @@ public sealed class SystemMetricsServiceCancellationTests
     [Fact]
     public async Task PostMutationCollectionException_RollsBackBothTrackersAndClearsTransactions()
     {
+        var clock = new FakeTimeProvider();
         var gpu0 = NvidiaGpu("gpu0", "GPU 0", "inst-0");
         var gpu1 = NvidiaGpu("gpu1", "GPU 1", "inst-1");
         var source = new BlockingFakeSource(new[] { gpu0, gpu1 });
-        var service = CreateService(source);
+        var service = CreateService(source, clock);
         var faultingCollector = new ThrowAfterServiceCollection(service);
         var snapshots = new ConcurrentQueue<MetricsSnapshot>();
         var publications = new ConcurrentQueue<string>();
@@ -1636,7 +1657,7 @@ public sealed class SystemMetricsServiceCancellationTests
         {
             snapshots.Enqueue(snapshot);
             return WidgetPayloadPresenter.Present(snapshot).ToJson();
-        }, (payload, widget) => { publications.Enqueue(payload); return Task.CompletedTask; }, TimeSpan.FromMinutes(5), new FakeTimeProvider());
+        }, (payload, widget) => { publications.Enqueue(payload); return Task.CompletedTask; }, TimeSpan.FromMinutes(5), clock);
 
         try
         {
@@ -1646,6 +1667,10 @@ public sealed class SystemMetricsServiceCancellationTests
             Assert.True(GetExtraAvailable(publications.ElementAt(0), 1));
             Assert.Equal(0, service.PendingPrimaryCycleCount);
             Assert.Equal(0, service.PendingSecondaryCycleCount);
+
+            // Place the injected collection failure at the inclusive
+            // retention boundary so rollback preserves the qualifying time.
+            clock.Advance(TimeSpan.FromSeconds(6));
 
             source.SetDevices(new[]
             {
@@ -1677,6 +1702,10 @@ public sealed class SystemMetricsServiceCancellationTests
                 Assert.Equal(0, service.PendingSecondaryCycleCount);
             }
 
+            // The last qualification was at T=0; cross the inclusive T=6s
+            // retention boundary by exactly one tick.
+            clock.Advance(TimeSpan.FromTicks(1));
+
             pipeline.Start();
             await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 5));
             await WithWatchdogAsync(pipeline.DeactivateAsync());
@@ -1698,16 +1727,17 @@ public sealed class SystemMetricsServiceCancellationTests
     [Fact]
     public async Task FirstCycleRetiredBeforeAcceptance_RestoresBothTrackers()
     {
+        var clock = new FakeTimeProvider();
         var gpu0 = NvidiaGpu("gpu0", "GPU 0", "inst-0");
         var gpu1 = NvidiaGpu("gpu1", "GPU 1", "inst-1");
         var source = new BlockingFakeSource(new[] { gpu0, gpu1 });
-        var service = CreateService(source);
+        var service = CreateService(source, clock);
         var publications = new ConcurrentQueue<MetricsSnapshot>();
         var pipeline = new UpdatePipeline<TestSize>(service, OneActiveWidget(), snapshot =>
         {
             publications.Enqueue(snapshot);
             return WidgetPayloadPresenter.Present(snapshot).ToJson();
-        }, (payload, widget) => Task.CompletedTask, TimeSpan.FromMinutes(5), new FakeTimeProvider());
+        }, (payload, widget) => Task.CompletedTask, TimeSpan.FromMinutes(5), clock);
 
         try
         {
@@ -1760,10 +1790,11 @@ public sealed class SystemMetricsServiceCancellationTests
     [Fact]
     public async Task AcceptedSnapshotSuppressedAfterAcceptance_RemainsCommitted()
     {
+        var clock = new FakeTimeProvider();
         var gpu0 = NvidiaGpu("gpu0", "GPU 0", "inst-0");
         var gpu1 = NvidiaGpu("gpu1", "GPU 1", "inst-1");
         var source = new BlockingFakeSource(new[] { gpu0, gpu1 });
-        var service = CreateService(source);
+        var service = CreateService(source, clock);
         var publications = new ConcurrentQueue<string>();
         using var payloadGate = new ManualResetEventSlim(false);
         using var builderEntered = new ManualResetEventSlim(false);
@@ -1777,13 +1808,20 @@ public sealed class SystemMetricsServiceCancellationTests
                     throw new TimeoutException("Payload gate was not released.");
             }
             return WidgetPayloadPresenter.Present(snapshot).ToJson();
-        }, (payload, widget) => { publications.Enqueue(payload); return Task.CompletedTask; }, TimeSpan.FromMinutes(5), new FakeTimeProvider());
+        }, (payload, widget) => { publications.Enqueue(payload); return Task.CompletedTask; }, TimeSpan.FromMinutes(5), clock);
 
         try
         {
             pipeline.Start();
             await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 1));
             await WithWatchdogAsync(pipeline.DeactivateAsync());
+
+            // Advance clock by 6 seconds to expire the grace period for gpu1.
+            // This simulates the time passing so that subsequent failures
+            // will exhaust grace and make the GPU unavailable.
+            clock.Advance(TimeSpan.FromSeconds(6));
+            await DrainAsync();
+
             source.SetDevices(new[]
             {
                 gpu0 with { Sensors = new List<LhmSensorDescriptor>() },
@@ -1794,6 +1832,7 @@ public sealed class SystemMetricsServiceCancellationTests
             Assert.True(await Task.Run(() => builderEntered.Wait(Watchdog)));
             Assert.Equal(0, service.PendingPrimaryCycleCount);
             Assert.Equal(0, service.PendingSecondaryCycleCount);
+            Assert.Equal(1, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
             pipeline.Stop();
             payloadGate.Set();
             await WithWatchdogAsync(pipeline.WaitForIdleAsync());
@@ -1804,9 +1843,10 @@ public sealed class SystemMetricsServiceCancellationTests
                 pipeline.Start();
                 await WithWatchdogAsync(WaitForPublicationCountAsync(publications, acceptedFailure));
                 await WithWatchdogAsync(pipeline.DeactivateAsync());
-                Assert.Equal(acceptedFailure < 4, GetExtraAvailable(publications.ElementAt(acceptedFailure - 1), 1));
                 Assert.Equal(0, service.PendingPrimaryCycleCount);
                 Assert.Equal(0, service.PendingSecondaryCycleCount);
+                Assert.Equal(acceptedFailure, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
+                Assert.True(GetExtraAvailable(publications.ElementAt(acceptedFailure - 1), 1));
             }
         }
         finally
@@ -1822,10 +1862,11 @@ public sealed class SystemMetricsServiceCancellationTests
     [Fact]
     public async Task ReactivationWhileRejectedCollectionBlocked_WaitsForRollbackBeforeNextMutation()
     {
+        var clock = new FakeTimeProvider();
         var gpu0 = NvidiaGpu("gpu0", "GPU 0", "inst-0");
         var gpu1 = NvidiaGpu("gpu1", "GPU 1", "inst-1");
         var source = new BlockingFakeSource(new[] { gpu0, gpu1 });
-        var service = CreateService(source);
+        var service = CreateService(source, clock);
         using var serviceLifetime = service;
         var snapshots = new ConcurrentQueue<MetricsSnapshot>();
         var publications = new ConcurrentQueue<string>();
@@ -1834,7 +1875,7 @@ public sealed class SystemMetricsServiceCancellationTests
             snapshots.Enqueue(snapshot);
             return WidgetPayloadPresenter.Present(snapshot).ToJson();
         }, (payload, widget) => { publications.Enqueue(payload); return Task.CompletedTask; },
-            TimeSpan.FromMinutes(5), new FakeTimeProvider());
+            TimeSpan.FromMinutes(5), clock);
         await using var ownedPipeline = pipeline;
         using var releaseGateOnExit = new ReleaseGateOnDispose(source);
 
@@ -1843,6 +1884,11 @@ public sealed class SystemMetricsServiceCancellationTests
             pipeline.Start();
             await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 1));
             await WithWatchdogAsync(pipeline.DeactivateAsync());
+
+            // Put the blocked rejected collection and replacement at the
+            // inclusive retention boundary.
+            clock.Advance(TimeSpan.FromSeconds(6));
+
             source.SetDevices(new[]
             {
                 gpu0 with { Sensors = new List<LhmSensorDescriptor>() },
@@ -1854,7 +1900,9 @@ public sealed class SystemMetricsServiceCancellationTests
             await WithWatchdogAsync(WaitForReadCountAsync(source, 2));
             pipeline.Stop();
             pipeline.Start(); // The replacement generation waits for the blocked cycle to reject.
-            await Task.Delay(50);
+            // Collection is still blocked in the sensor read, before tracker
+            // mutation; the replacement cannot start a second read yet.
+            Assert.Equal(0, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
             Assert.Equal(2, source.ReadCount);
             Assert.Equal(1, source.MaxConcurrentReads);
             source.Release();
@@ -1875,10 +1923,17 @@ public sealed class SystemMetricsServiceCancellationTests
                 await WithWatchdogAsync(pipeline.DeactivateAsync());
                 Assert.Equal(failure, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
                 Assert.Equal(failure < 4 ? failure : 0, service.PrimaryConsecutiveFailures);
-                Assert.Equal(failure < 4, GetExtraAvailable(publications.ElementAt(failure), 1));
+                Assert.True(GetExtraAvailable(publications.ElementAt(failure), 1));
                 Assert.Equal(0, service.PendingPrimaryCycleCount);
                 Assert.Equal(0, service.PendingSecondaryCycleCount);
             }
+
+            clock.Advance(TimeSpan.FromTicks(1));
+            pipeline.Start();
+            await WithWatchdogAsync(WaitForPublicationCountAsync(publications, 6));
+            await WithWatchdogAsync(pipeline.DeactivateAsync());
+            Assert.Equal(5, service.SecondaryTrackingState["inst-1"].ConsecutiveFailures);
+            Assert.False(GetExtraAvailable(publications.ElementAt(5), 1));
         }
         finally
         {
@@ -1904,7 +1959,7 @@ public sealed class SystemMetricsServiceCancellationTests
         var clock = new FakeTimeProvider();
         var gpu0 = NvidiaGpu("/gpu-nvidia/0", "GPU 0", "inst-0");
         var source = new BlockingFakeSource(new[] { gpu0 });
-        var service = CreateService(source);
+        var service = CreateService(source, clock);
         using var serviceLifetime = service;
 
         var publications = new ConcurrentQueue<string>();

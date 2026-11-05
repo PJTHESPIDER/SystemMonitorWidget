@@ -155,8 +155,8 @@ public sealed class GpuGraceIntegrationTests
     /// <summary>
     /// Verifies the complete grace boundary lifecycle for a secondary GPU:
     /// 1. Initial success (both GPUs have telemetry, both appear)
-    /// 2. Failures 1-3 (secondary GPU retains through 3 consecutive failures)
-    /// 3. Failure 4 (secondary GPU removed)
+    /// 2. Secondary GPU remains eligible through the six-second boundary
+    /// 3. Secondary GPU expires just after the six-second window
     /// 4. Recovery (secondary GPU reappears with telemetry, qualifies fresh)
     /// 5. Disappearance (secondary GPU physically removed, gone immediately)
     /// 6. Repeated presentation (same snapshot presented multiple times, no additional failures)
@@ -167,7 +167,7 @@ public sealed class GpuGraceIntegrationTests
     {
         var time = new FakeTimeProvider();
         var tracker = new GpuSelectionTracker(graceCycles: 3, time);
-        var extrasTracker = new GpuExtrasTracker(graceCycles: 3, time);
+        var extrasTracker = new GpuExtrasTracker(GpuExtrasTracker.DefaultGraceSeconds, time);
 
         // Two discrete GPUs: gpu0 (primary), gpu1 (secondary)
         // gpu0 is the RTX 2070 Super (InstanceId ends in 0008), gpu1 is RTX 3070 (InstanceId ends in 0010)
@@ -224,7 +224,7 @@ public sealed class GpuGraceIntegrationTests
         var (snapshot2, payload2, _, _, nextTracked2) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
         trackedGpuDeviceId = nextTracked2;
 
-        // gpu1 should still appear as extra (within grace period, failure 1 of 3)
+        // gpu1 should still appear as extra within the time-based retention window
         Assert.True(payload2.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
         Assert.Contains(gpu1.InstanceId, snapshot2.GpuTrackedExtraInstanceIds);
 
@@ -234,7 +234,7 @@ public sealed class GpuGraceIntegrationTests
         var (snapshot3, payload3, _, _, nextTracked3) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
         trackedGpuDeviceId = nextTracked3;
 
-        // gpu1 should still appear (failure 2 of 3)
+        // gpu1 should still appear while within the time-based retention window
         Assert.True(payload3.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
         Assert.Contains(gpu1.InstanceId, snapshot3.GpuTrackedExtraInstanceIds);
 
@@ -244,56 +244,66 @@ public sealed class GpuGraceIntegrationTests
         var (snapshot4, payload4, _, _, nextTracked4) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
         trackedGpuDeviceId = nextTracked4;
 
-        // gpu1 should still appear (failure 3 of 3, last grace cycle)
+        // gpu1 should still appear while within the time-based retention window
         Assert.True(payload4.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
         Assert.Contains(gpu1.InstanceId, snapshot4.GpuTrackedExtraInstanceIds);
 
-        time.Advance(TimeSpan.FromSeconds(1));
+        time.Advance(TimeSpan.FromSeconds(GpuExtrasTracker.DefaultGraceSeconds - 3));
 
-        // --- CYCLE 5: Failure 4 - grace exhausted, gpu1 removed ---
+        // --- CYCLE 5: Exactly six seconds after qualification ---
         var (snapshot5, payload5, _, _, nextTracked5) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
         trackedGpuDeviceId = nextTracked5;
 
-        // gpu1 should be gone (failure 4 exceeds grace of 3)
-        Assert.False(payload5.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
-        Assert.DoesNotContain(gpu1.InstanceId, snapshot5.GpuTrackedExtraInstanceIds);
+        // The retention window includes its exact six-second boundary.
+        Assert.True(payload5.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.Contains(gpu1.InstanceId, snapshot5.GpuTrackedExtraInstanceIds);
 
-        time.Advance(TimeSpan.FromSeconds(1));
+        time.Advance(TimeSpan.FromTicks(1));
 
-        // --- CYCLE 6: Recovery - gpu1 reappears WITH telemetry ---
-        var (snapshot6, payload6, _, _, nextTracked6) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1 }, trackedGpuDeviceId: trackedGpuDeviceId); // gpu1 with telemetry again
+        // --- CYCLE 6: Retention expires just beyond the boundary ---
+        var (snapshot6, payload6, _, _, nextTracked6) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
         trackedGpuDeviceId = nextTracked6;
-
-        // gpu1 should reappear and qualify fresh (new eligibility history)
-        Assert.True(payload6.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
-        Assert.Contains(gpu1.InstanceId, snapshot6.GpuTrackedExtraInstanceIds);
+        Assert.False(payload6.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.DoesNotContain(gpu1.InstanceId, snapshot6.GpuTrackedExtraInstanceIds);
 
         time.Advance(TimeSpan.FromSeconds(1));
 
-        // --- CYCLE 7: Disappearance - gpu1 physically removed from system ---
-        var (snapshot7, payload7, _, _, nextTracked7) = RunCycle(time, tracker, extrasTracker, new[] { gpu0 }, trackedGpuDeviceId: trackedGpuDeviceId); // gpu1 no longer in device list
+        // --- CYCLE 7: Recovery - gpu1 reappears WITH telemetry ---
+        var (snapshot7, payload7, _, _, nextTracked7) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1 }, trackedGpuDeviceId: trackedGpuDeviceId); // gpu1 with telemetry again
         trackedGpuDeviceId = nextTracked7;
 
-        // gpu1 should be gone immediately (device disappearance ends eligibility)
-        Assert.False(payload7.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
-        Assert.DoesNotContain(gpu1.InstanceId, snapshot7.GpuTrackedExtraInstanceIds);
+        // gpu1 should reappear and qualify fresh (new eligibility history)
+        Assert.True(payload7.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.Contains(gpu1.InstanceId, snapshot7.GpuTrackedExtraInstanceIds);
 
         time.Advance(TimeSpan.FromSeconds(1));
 
-        // --- CYCLE 8: Repeated presentation - same snapshot presented multiple times ---
-        var (snapshot8, payload8a, _, _, nextTracked8) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1 }, trackedGpuDeviceId: trackedGpuDeviceId);
+        // --- CYCLE 8: Disappearance - gpu1 physically removed from system ---
+        var (snapshot8, payload8, _, _, nextTracked8) = RunCycle(time, tracker, extrasTracker, new[] { gpu0 }, trackedGpuDeviceId: trackedGpuDeviceId); // gpu1 no longer in device list
         trackedGpuDeviceId = nextTracked8;
-        var payload8b = WidgetPayloadPresenter.Present(snapshot8); // Present again with same snapshot
-        var payload8c = WidgetPayloadPresenter.Present(snapshot8); // And again
+
+        // gpu1 should be gone immediately (device disappearance ends eligibility)
+        Assert.False(payload8.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.DoesNotContain(gpu1.InstanceId, snapshot8.GpuTrackedExtraInstanceIds);
+
+        time.Advance(TimeSpan.FromSeconds(1));
+
+        // --- CYCLE 9: Repeated presentation - same snapshot presented multiple times ---
+        var (snapshot9, payload9a, _, _, nextTracked9) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1 }, trackedGpuDeviceId: trackedGpuDeviceId);
+        trackedGpuDeviceId = nextTracked9;
+        var payload9b = WidgetPayloadPresenter.Present(snapshot9); // Present again with same snapshot
+        var payload9c = WidgetPayloadPresenter.Present(snapshot9); // And again
 
         // All three presentations should show the same extra device
         // No additional failure consumed because no new collection cycle
-        Assert.True(payload8a.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
-        Assert.True(payload8b.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
-        Assert.True(payload8c.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.True(payload9a.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.True(payload9b.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.True(payload9c.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
 
-        // --- CYCLE 9: Verify snapshot immutability (behavioral) ---
-        var (snapshot9, _, _, _, _) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1 }, trackedGpuDeviceId: trackedGpuDeviceId);
+        var snapshot9Eligibility = snapshot9.GpuTrackedExtraInstanceIds.ToArray();
+
+        // --- CYCLE 10: Verify snapshot immutability (behavioral) ---
+        _ = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1 }, trackedGpuDeviceId: trackedGpuDeviceId);
 
         // 1. Input isolation: Modifying the caller's original array after snapshot creation
         // must not change the snapshot.
@@ -323,9 +333,9 @@ public sealed class GpuGraceIntegrationTests
 
         // 3. Historical stability: Later tracker updates must not change an earlier snapshot.
         // Run another cycle which will update the trackers
-        var (snapshot10, _, _, _, _) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1 }, trackedGpuDeviceId: trackedGpuDeviceId);
-        // snapshot9's eligibility should be unchanged
-        Assert.Equal(snapshot9.GpuTrackedExtraInstanceIds, snapshot9.GpuTrackedExtraInstanceIds);
+        _ = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1 }, trackedGpuDeviceId: trackedGpuDeviceId);
+        // snapshot9's eligibility should remain stable after later tracker updates.
+        Assert.Equal(snapshot9Eligibility, snapshot9.GpuTrackedExtraInstanceIds);
     }
 
     // ============================================================
@@ -333,9 +343,8 @@ public sealed class GpuGraceIntegrationTests
     // ============================================================
 
     /// <summary>
-    /// Verifies that a canceled/aborted collection (one that produces no
-    /// accepted snapshot) does not advance the grace failure counter.
-    /// Only completed collection cycles count.
+    /// Verifies that a canceled collection does not mutate tracker state,
+    /// while retention continues to follow the six-second clock.
     ///
     /// This simulates: a collection starts, but is canceled before
     /// producing a snapshot. The tracker should not count this as a failure.
@@ -345,7 +354,7 @@ public sealed class GpuGraceIntegrationTests
     {
         var time = new FakeTimeProvider();
         var tracker = new GpuSelectionTracker(graceCycles: 3, time);
-        var extrasTracker = new GpuExtrasTracker(graceCycles: 3, time);
+        var extrasTracker = new GpuExtrasTracker(GpuExtrasTracker.DefaultGraceSeconds, time);
 
         var gpu0 = LhmFixtures.NvidiaGpu(readable: true);
         var gpu1 = LhmFixtures.NvidiaGpu(readable: true);
@@ -371,6 +380,7 @@ public sealed class GpuGraceIntegrationTests
         var (snapshot2, payload2, _, _, nextTracked2) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
         trackedGpuDeviceId = nextTracked2;
         Assert.True(payload2.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        var failuresBeforeCancellation = extrasTracker.GetTrackingState()[gpu1.InstanceId].ConsecutiveFailures;
 
         time.Advance(TimeSpan.FromSeconds(1));
 
@@ -381,11 +391,12 @@ public sealed class GpuGraceIntegrationTests
         // Here we simulate that by simply NOT calling RunCycle() for one cycle.
         // The time advances but no collection occurs.
         time.Advance(TimeSpan.FromSeconds(1)); // Time passes, but no Collect() call
+        Assert.Equal(failuresBeforeCancellation, extrasTracker.GetTrackingState()[gpu1.InstanceId].ConsecutiveFailures);
 
         // --- CYCLE 3 (actual): Failure 2 - gpu1 still no telemetry ---
         var (snapshot3, payload3, _, _, nextTracked3) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
         trackedGpuDeviceId = nextTracked3;
-        // Should still be retained (this is failure 2, not 3)
+        // It remains eligible because only three seconds have elapsed since qualification.
         Assert.True(payload3.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
 
         time.Advance(TimeSpan.FromSeconds(1));
@@ -393,20 +404,21 @@ public sealed class GpuGraceIntegrationTests
         // --- CYCLE 4 (actual): Failure 3 - gpu1 still no telemetry ---
         var (snapshot4, payload4, _, _, nextTracked4) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
         trackedGpuDeviceId = nextTracked4;
-        // Should still be retained (this is failure 3, last grace cycle)
+        // It remains eligible within the six-second window.
         Assert.True(payload4.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
 
-        time.Advance(TimeSpan.FromSeconds(1));
+        time.Advance(TimeSpan.FromSeconds(2));
 
-        // --- CYCLE 5 (actual): Failure 4 - grace exhausted ---
+        // --- CYCLE 5 (actual): Exactly six seconds after qualification ---
         var (snapshot5, payload5, _, _, nextTracked5) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
         trackedGpuDeviceId = nextTracked5;
-        // Now removed (failure 4)
-        Assert.False(payload5.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
+        Assert.True(payload5.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
 
-        // If the canceled cycle had consumed grace, the removal would have
-        // happened one cycle earlier (on what we called "CYCLE 4" above).
-        // The fact it happens on CYCLE 5 proves cancellation doesn't consume grace.
+        time.Advance(TimeSpan.FromTicks(1));
+
+        // --- CYCLE 6 (actual): Retention has expired ---
+        var (snapshot6, payload6, _, _, _) = RunCycle(time, tracker, extrasTracker, new[] { gpu0, gpu1NoTelemetry }, trackedGpuDeviceId: trackedGpuDeviceId);
+        Assert.False(payload6.GetFlag(WidgetPayloadPresenter.ExtraAvailableKey(1)));
     }
 
     // ============================================================
@@ -421,7 +433,7 @@ public sealed class GpuGraceIntegrationTests
     {
         var time = new FakeTimeProvider();
         var tracker = new GpuSelectionTracker(graceCycles: 3, time);
-        var extrasTracker = new GpuExtrasTracker(graceCycles: 3, time);
+        var extrasTracker = new GpuExtrasTracker(GpuExtrasTracker.DefaultGraceSeconds, time);
 
         var gpu0 = LhmFixtures.NvidiaGpu(readable: true);
         var gpu1 = LhmFixtures.NvidiaGpu(readable: true);
@@ -495,7 +507,7 @@ public sealed class GpuGraceIntegrationTests
     {
         var time = new FakeTimeProvider();
         var tracker = new GpuSelectionTracker(graceCycles: 3, time);
-        var extrasTracker = new GpuExtrasTracker(graceCycles: 3, time);
+        var extrasTracker = new GpuExtrasTracker(GpuExtrasTracker.DefaultGraceSeconds, time);
 
         var gpu0 = LhmFixtures.NvidiaGpu(readable: true);
         var gpu1 = LhmFixtures.NvidiaGpu(readable: true);
@@ -550,7 +562,7 @@ public sealed class GpuGraceIntegrationTests
     {
         var time = new FakeTimeProvider();
         var tracker = new GpuSelectionTracker(graceCycles: 3, time);
-        var extrasTracker = new GpuExtrasTracker(graceCycles: 3, time);
+        var extrasTracker = new GpuExtrasTracker(GpuExtrasTracker.DefaultGraceSeconds, time);
 
         var gpu0 = LhmFixtures.NvidiaGpu(readable: true);
         var gpu1 = LhmFixtures.NvidiaGpu(readable: true);
@@ -621,7 +633,7 @@ public sealed class GpuGraceIntegrationTests
         // when primary loses telemetry and another GPU has telemetry.
         // This tests the EXTRAS tracker's role transition handling, not primary grace.
         var tracker = new GpuSelectionTracker(graceCycles: 0, time);
-        var extrasTracker = new GpuExtrasTracker(graceCycles: 3, time);
+        var extrasTracker = new GpuExtrasTracker(GpuExtrasTracker.DefaultGraceSeconds, time);
 
         // Two discrete GPUs: gpu0 (primary), gpu1 (secondary)
         // gpu0 is the RTX 2070 Super (InstanceId ends in 0008), gpu1 is RTX 3070 (InstanceId ends in 0010)
@@ -702,7 +714,7 @@ public sealed class GpuGraceIntegrationTests
     {
         var time = new FakeTimeProvider();
         var tracker = new GpuSelectionTracker(graceCycles: 3, time);
-        var extrasTracker = new GpuExtrasTracker(graceCycles: 3, time);
+        var extrasTracker = new GpuExtrasTracker(GpuExtrasTracker.DefaultGraceSeconds, time);
 
         // Three GPUs: gpu0 (primary), gpu1 (secondary with telemetry), gpu2 (secondary in grace)
         var gpu0 = LhmFixtures.NvidiaGpu(readable: true);
