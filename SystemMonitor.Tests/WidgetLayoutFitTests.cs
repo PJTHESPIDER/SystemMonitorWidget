@@ -195,6 +195,45 @@ public class WidgetLayoutFitTests
             new[] { "${cpu}", "${gpu}", "${ramCapacityCompact}", "${diskCapacityCompact}" });
     }
 
+    [Fact]
+    public void TheSmallGpuMetricGroupsAreSeparatedFromTheirPeers()
+    {
+        // The small GPU row keeps its own ColumnSet; the separation between
+        // the GPU metric groups is carried by the columns. Only the gap
+        // before the Temp and memory groups is widened here, so the GPU
+        // label-to-first-value gap and the row-level ColumnSet spacing are
+        // left exactly as they were.
+        using var document = System.Text.Json.JsonDocument.Parse(WidgetTemplates.BuildTemplate(WidgetLayoutSize.Small));
+        var body = document.RootElement.GetProperty("body");
+        var gpuRow = FindBodyElement(body, "${gpuMemoryCapacityCompact}");
+        Assert.Equal("Small", gpuRow.GetProperty("spacing").GetString());
+        var columns = gpuRow.GetProperty("columns").EnumerateArray().ToArray();
+        Assert.Equal(4, columns.Length);
+        Assert.False(columns[0].TryGetProperty("spacing", out _));
+        Assert.False(columns[1].TryGetProperty("spacing", out _));
+        Assert.Equal("Large", columns[2].GetProperty("spacing").GetString());
+        Assert.Equal("Large", columns[3].GetProperty("spacing").GetString());
+    }
+
+    [Fact]
+    public void TheSmallCpuMetricGroupsAreSeparatedFromTheirPeers()
+    {
+        // The small CPU row keeps its own ColumnSet; separation between the
+        // CPU peer metric groups uses the same treatment as the small GPU row,
+        // while the CPU label-to-first-value gap stays unchanged. The
+        // conditional temperature column keeps its own $when.
+        using var document = System.Text.Json.JsonDocument.Parse(WidgetTemplates.BuildTemplate(WidgetLayoutSize.Small));
+        var body = document.RootElement.GetProperty("body");
+        var cpuRow = FindBodyElement(body, "${cpuTemp}");
+        Assert.Equal("Small", cpuRow.GetProperty("spacing").GetString());
+        var columns = cpuRow.GetProperty("columns").EnumerateArray().ToArray();
+        Assert.Equal(4, columns.Length);
+        Assert.False(columns[0].TryGetProperty("spacing", out _));
+        Assert.False(columns[1].TryGetProperty("spacing", out _));
+        Assert.Equal("Medium", columns[2].GetProperty("spacing").GetString());
+        Assert.Equal("Medium", columns[3].GetProperty("spacing").GetString());
+    }
+
     [Theory]
     [InlineData(WidgetLayoutSize.Medium)]
     [InlineData(WidgetLayoutSize.Large)]
@@ -221,6 +260,36 @@ public class WidgetLayoutFitTests
             var metrics = FindNestedTextElement(body, binding);
             Assert.Equal("None", metrics.GetProperty("spacing").GetString());
         }
+    }
+
+    [Theory]
+    [InlineData(WidgetLayoutSize.Medium)]
+    [InlineData(WidgetLayoutSize.Large)]
+    public void TheGpuMetricGroupsAreSeparatedFromTheirPeers(WidgetLayoutSize size)
+    {
+        // The GPU section renders its peer metric groups — Usage, Temp and
+        // the memory figure — as the columns of one ColumnSet. Spacing
+        // between those groups is the per-column "spacing" property: each
+        // column carries the gap to the column before it, and the first
+        // column in a set carries none. The groups were packed with no gap,
+        // which read as crowded, so the group-to-group spacing is now set
+        // explicitly as inter-column GPU metric spacing. Only the
+        // group-to-group spacing changes; the ColumnSet's own "spacing" (the
+        // gap to the heading that precedes it) and each group's own value,
+        // which stays tight to its label, are unchanged.
+        using var document = System.Text.Json.JsonDocument.Parse(WidgetTemplates.BuildTemplate(size));
+        var body = document.RootElement.GetProperty("body");
+        var gpuMetrics = Descendants(body).First(element =>
+            element.ValueKind == System.Text.Json.JsonValueKind.Object
+            && element.TryGetProperty("type", out var type)
+            && type.GetString() == "ColumnSet"
+            && ContainsText(element, "${gpuMemoryCapacityCompact}"));
+        Assert.Equal("None", gpuMetrics.GetProperty("spacing").GetString());
+        var columns = gpuMetrics.GetProperty("columns").EnumerateArray().ToArray();
+        Assert.Equal(3, columns.Length);
+        Assert.False(columns[0].TryGetProperty("spacing", out _));
+        Assert.Equal("Large", columns[1].GetProperty("spacing").GetString());
+        Assert.Equal("Large", columns[2].GetProperty("spacing").GetString());
     }
 
     [Theory]
@@ -274,9 +343,14 @@ public class WidgetLayoutFitTests
         {
             Assert.Equal("None", category.GetProperty("spacing").GetString());
             Assert.False(category.TryGetProperty("padding", out _));
-            Assert.All(
-                category.GetProperty("items").EnumerateArray(),
-                item => Assert.Equal("None", item.GetProperty("spacing").GetString()));
+
+            foreach (var item in category.GetProperty("items").EnumerateArray())
+            {
+                // Every item in a category stays tight to its content: the GPU
+                // metric groups carry their group-to-group gap on the columns
+                // of their ColumnSet, not on the ColumnSet itself.
+                Assert.Equal("None", item.GetProperty("spacing").GetString());
+            }
         }
 
         var conditionalGpuGap = gaps.First(gap =>

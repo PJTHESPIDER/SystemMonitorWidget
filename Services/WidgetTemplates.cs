@@ -160,6 +160,7 @@ namespace System_Monitor.Services
                 {
                   "type": "Column",
                   "width": "auto",
+                  "spacing": "Medium",
                   "items": [
                     {
                       "type": "TextBlock",
@@ -173,6 +174,7 @@ namespace System_Monitor.Services
                 {
                   "type": "Column",
                   "width": "auto",
+                  "spacing": "Medium",
                   "items": [
                     {
                       "type": "TextBlock",
@@ -219,6 +221,7 @@ namespace System_Monitor.Services
                 {
                   "type": "Column",
                   "width": "auto",
+                  "spacing": "Large",
                   "items": [
                     {
                       "type": "TextBlock",
@@ -232,6 +235,7 @@ namespace System_Monitor.Services
                 {
                   "type": "Column",
                   "width": "auto",
+                  "spacing": "Large",
                   "items": [
                     {
                       "type": "TextBlock",
@@ -470,6 +474,7 @@ namespace System_Monitor.Services
                     {
                       "type": "Column",
                       "width": "auto",
+                      "spacing": "Large",
                       "items": [
                         {
                           "type": "TextBlock",
@@ -489,6 +494,7 @@ namespace System_Monitor.Services
                     {
                       "type": "Column",
                       "width": "stretch",
+                      "spacing": "Large",
                       "items": [
                         {
                           "type": "TextBlock",
@@ -749,6 +755,7 @@ namespace System_Monitor.Services
                 {
                   "type": "Column",
                   "width": "auto",
+                  "spacing": "Large",
                   "items": [
                     {
                       "type": "TextBlock",
@@ -768,6 +775,7 @@ namespace System_Monitor.Services
                 {
                   "type": "Column",
                   "width": "stretch",
+                  "spacing": "Large",
                   "items": [
                     {
                       "type": "TextBlock",
