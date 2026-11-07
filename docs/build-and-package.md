@@ -95,6 +95,71 @@ linked because the production service constructor references it, so its
 package is required at compile time. The suite can therefore run on a build
 agent without an attached hardware backend.
 
+## 3a. Authenticode Verification Fixtures (for smoke tests)
+
+The repository contains a tracked PawnIO installer used as the valid signed
+source for tampered-fixture generation:
+
+```
+build/pawnio_install/PawnIO_setup.exe
+```
+
+This file is tracked as the canonical source for the valid-signed fixture.
+Its presence in the repository does **not** establish trustworthiness; the
+smoke test validates its signature against the Windows trust store at
+runtime.
+
+### Generating test fixtures
+
+Fixtures are generated on demand from an explicit unsigned publish output.
+Use a new isolated temporary directory for the outputs — do not write them
+into the repository.
+
+```powershell
+# 1. Build and publish to get an unsigned executable
+dotnet publish SystemMonitor/SystemMonitor.csproj -c Release -r win-x64 -o <path/to/publish-temp> -p:SelfContained=false -p:PublishReadyToRun=true
+
+# 2. Generate fixtures in a NEW isolated temporary directory
+& build/verify-fixtures/create-fixtures.ps1 \
+    -UnsignedPublishExe "<path/to/publish-temp>/SystemMonitor.exe" \
+    -OutputDir "<new/isolated/temp/dir>"
+```
+
+Required parameters:
+- `-UnsignedPublishExe`: Path to the unsigned `SystemMonitor.exe` produced by `dotnet publish`. Must be a PE executable with `NotSigned` / `None` Authenticode status.
+- `-OutputDir`: A new or empty directory that is **not** `build/verify-fixtures/` and does not already contain `unsigned_fixture.exe` or `modified_signed.exe`.
+
+Optional parameters (recorded as supplied metadata only):
+- `-SourceCommit`: Git commit hash (not validated)
+- `-PublishCommand`: Command string used to publish (not validated)
+
+The script writes two fixtures into `OutputDir`:
+- `unsigned_fixture.exe` — copy of the input, validated as unsigned
+- `modified_signed.exe` — copy of `build/pawnio_install/PawnIO_setup.exe` with one byte appended to break the signature
+
+### Running the smoke test
+
+```powershell
+& build/verify-fixtures/run-smoke.ps1 \
+    -UnsignedFixture "<new/isolated/temp/dir>/unsigned_fixture.exe" \
+    -SignedInstaller "build/pawnio_install/PawnIO_setup.exe" \
+    -ModifiedFixture "<new/isolated/temp/dir>/modified_signed.exe"
+```
+
+All three parameters are mandatory. The test validates:
+1. Unsigned fixture → `NotSigned` / `None`
+2. PawnIO installer → `Valid` / `Authenticode`, signer subject matches expected value, timestamp present
+3. Modified fixture → non-`Valid` (signature broken by tampering)
+
+**These smoke tests cover Authenticode signature-handling logic only.**
+They do **not** validate new-device installation, widget rendering, or CPU-temperature readings.
+
+The extracted MSIX directory (`build/verify-extract8/`) is no longer required
+for this workflow. Fixtures are generated directly from the unsigned publish
+output.
+
+Generated fixtures must remain untracked (they are excluded by `.gitignore`).
+
 ## 4. Package
 
 ```powershell

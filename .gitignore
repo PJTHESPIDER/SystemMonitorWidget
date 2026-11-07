@@ -429,3 +429,7 @@ build/*.log
 # written on the user's own machine and describe that machine.
 systemmonitor.log
 systemmonitor-inventory.txt
+
+# Generated test fixtures (created by build/verify-fixtures/create-fixtures.ps1)
+build/verify-fixtures/unsigned_fixture.exe
+build/verify-fixtures/modified_signed.exe
