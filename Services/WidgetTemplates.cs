@@ -419,6 +419,15 @@ namespace System_Monitor.Services
               ]
             },
             {
+              "type": "TextBlock",
+              "text": "${cpuTempAvailabilityReason}",
+              "size": "ExtraSmall",
+              "isSubtle": true,
+              "spacing": "None",
+              "wrap": true,
+              "$when": "${cpuTempShow && cpuTempAvailabilityReason != ''}"
+            },
+            {
               "type": "Container",
               "id": "layoutGapBeforeGpu",
               "height": "stretch",
@@ -698,6 +707,15 @@ namespace System_Monitor.Services
               ]
                 }
               ]
+            },
+            {
+              "type": "TextBlock",
+              "text": "${cpuTempAvailabilityReason}",
+              "size": "ExtraSmall",
+              "isSubtle": true,
+              "spacing": "None",
+              "wrap": true,
+              "$when": "${cpuTempShow && cpuTempAvailabilityReason != ''}"
             },
             {
               "type": "Container",

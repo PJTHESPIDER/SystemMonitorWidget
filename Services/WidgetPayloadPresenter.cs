@@ -184,6 +184,13 @@ namespace System_Monitor.Services
         public const string CpuTempShowKey = "cpuTempShow";
 
         /// <summary>
+        /// Text key for the passive CPU temperature availability explanation.
+        /// Shown when the temperature is not Available and the CPU temperature
+        /// row is visible. Empty when the reading is fresh and available.
+        /// </summary>
+        public const string CpuTempAvailabilityReasonKey = "cpuTempAvailabilityReason";
+
+        /// <summary>
         /// Every text key the payload produces. The templates bind against
         /// exactly these names.
         /// </summary>
@@ -199,6 +206,7 @@ namespace System_Monitor.Services
             NetDownKey, NetUpKey, TempSummaryKey, AcpiThermalZoneTempKey,
             SampleTimeKey, LastUpdatedKey,
             CpuTempSetupStatusKey,
+            CpuTempAvailabilityReasonKey,
         };
 
         /// <summary>
@@ -266,12 +274,28 @@ namespace System_Monitor.Services
         /// snapshot after time has elapsed should pass the current time so
         /// that measurements older than the stale threshold are marked stale.
         /// </param>
+        /// <param name="showCpuTemperature">
+        /// Whether the CPU temperature row should be shown. Controlled by the
+        /// per-widget preference.
+        /// </param>
+        /// <param name="pawnIoInstallationState">
+        /// Installation state of the PawnIO dependency. Used to distinguish
+        /// "dependency absent" from "installed but unreadable" in the passive
+        /// availability explanation. Null when unknown.
+        /// </param>
+        /// <param name="sensorAvailabilityReason">
+        /// Optional sensor-specific unavailability reason from the collector.
+        /// When provided, refines the explanation for Failed/Unsupported
+        /// readings. Null when not available.
+        /// </param>
         public static WidgetPayload Present(
             MetricsSnapshot? snapshot,
             string? selectedGpuInstanceId = null,
             int maxExtraDevices = MaxExtraDevices,
             DateTimeOffset? currentTime = null,
-            bool showCpuTemperature = true)
+            bool showCpuTemperature = true,
+            PawnIoInstallationState? pawnIoInstallationState = null,
+            string? sensorAvailabilityReason = null)
         {
             var text = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var flags = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
@@ -319,6 +343,15 @@ namespace System_Monitor.Services
             // state). The status will be merged in by the provider via
             // PresentCpuTemperatureSetupState.
             text[CpuTempSetupStatusKey] = string.Empty;
+
+            // CPU temperature passive availability explanation.
+            // Computed from the measurement status, installation state, and
+            // optional sensor-specific reason. Shown only when the temperature
+            // row is visible and the reading is not fresh Available.
+            text[CpuTempAvailabilityReasonKey] = ComputeCpuTempAvailabilityReason(
+                snapshot.CpuTemperatureC,
+                pawnIoInstallationState,
+                sensorAvailabilityReason);
 
             // --- GPU: the presented device -----------------------------------
             var selection = GpuSelectionPolicy.Resolve(
@@ -500,8 +533,10 @@ namespace System_Monitor.Services
             MetricsSnapshot? snapshot,
             string? selectedGpuInstanceId,
             TimeProvider timeProvider,
-            bool showCpuTemperature = true) =>
-            Present(snapshot, selectedGpuInstanceId, currentTime: (timeProvider ?? throw new ArgumentNullException(nameof(timeProvider))).GetUtcNow(), showCpuTemperature: showCpuTemperature);
+            bool showCpuTemperature = true,
+            PawnIoInstallationState? pawnIoInstallationState = null,
+            string? sensorAvailabilityReason = null) =>
+            Present(snapshot, selectedGpuInstanceId, currentTime: (timeProvider ?? throw new ArgumentNullException(nameof(timeProvider))).GetUtcNow(), showCpuTemperature: showCpuTemperature, pawnIoInstallationState: pawnIoInstallationState, sensorAvailabilityReason: sensorAvailabilityReason);
 
         /// <summary>
         /// Merges the CPU temperature setup status into a payload.
@@ -1410,5 +1445,118 @@ namespace System_Monitor.Services
             measurement is not null
             && measurement.Status == MeasurementStatus.Available
             && measurement.Value.HasValue;
+
+        /// <summary>
+        /// Computes the passive CPU temperature availability explanation.
+        ///
+        /// Precedence (honest messages, no causation implied):
+        /// 1. Fresh Available reading → empty (no explanation), irrespective of install metadata.
+        /// 2. Stale → empty (stale is presented via the existing stale marker, not here).
+        /// 3. Unsupported/no recognized sensor → "No supported CPU temperature sensor detected"
+        /// 4. Failed refresh/retained value → "Unable to refresh CPU temperature"
+        /// 5. Failed/no usable value, dependency installed → "CPU temperature could not be read"
+        /// 6. Failed/no usable value, dependency confirmed absent → "PawnIO is not installed; CPU temperature is unavailable"
+        /// 7. Installation check failed/unknown, where installation context is relevant →
+        ///    "CPU temperature unavailable; dependency status could not be checked"
+        ///
+        /// The explanation is suppressed when the CPU temperature row is hidden
+        /// (handled by the template via cpuTempShow flag).
+        /// </summary>
+        private static string ComputeCpuTempAvailabilityReason(
+            Measurement? cpuTempMeasurement,
+            PawnIoInstallationState? installationState,
+            string? sensorAvailabilityReason)
+        {
+            // No measurement at all → treat as unavailable
+            if (cpuTempMeasurement is null)
+            {
+                return GetDependencyAbsentReason(installationState);
+            }
+
+            // Fresh available reading → no explanation needed
+            if (cpuTempMeasurement.Status == MeasurementStatus.Available)
+            {
+                return string.Empty;
+            }
+
+            // Stale readings are handled by the existing stale presentation
+            // (they show "stale" in the value field). Do not add a second explanation.
+            if (cpuTempMeasurement.Status == MeasurementStatus.Stale)
+            {
+                return string.Empty;
+            }
+
+            // Unsupported: no recognized sensor on this hardware
+            if (cpuTempMeasurement.Status == MeasurementStatus.Unsupported)
+            {
+                return "No supported CPU temperature sensor detected";
+            }
+
+            // Failed: reading attempted but no usable value
+            if (cpuTempMeasurement.Status == MeasurementStatus.Failed)
+            {
+                // Distinguish retained (previously available, now failed) from never-available
+                var isRetained = cpuTempMeasurement.LastSuccessfulUpdate.HasValue;
+
+                if (isRetained)
+                {
+                    return "Unable to refresh CPU temperature";
+                }
+
+                // Never-available failed reading: use installation state to refine
+                var installStatus = installationState?.Status ?? PawnIoInstallationStatus.Unknown;
+
+                if (installStatus == PawnIoInstallationStatus.Installed)
+                {
+                    // Dependency installed but unreadable — use sensor-specific reason if available
+                    if (!string.IsNullOrWhiteSpace(sensorAvailabilityReason))
+                    {
+                        // Map known sensor reasons to reviewed messages
+                        return sensorAvailabilityReason switch
+                        {
+                            SensorAvailability.Reasons.NotExposed => "CPU temperature could not be read",
+                            SensorAvailability.Reasons.ReadFailed => "CPU temperature could not be read",
+                            SensorAvailability.Reasons.NoValue => "CPU temperature could not be read",
+                            SensorAvailability.Reasons.NotPresent => "No supported CPU temperature sensor detected",
+                            _ => "CPU temperature could not be read"
+                        };
+                    }
+                    return "CPU temperature could not be read";
+                }
+
+                if (installStatus == PawnIoInstallationStatus.NotInstalled)
+                {
+                    return "PawnIO is not installed; CPU temperature is unavailable";
+                }
+
+                // CheckFailed: an actual check was attempted and failed
+                if (installStatus == PawnIoInstallationStatus.CheckFailed)
+                {
+                    return "CPU temperature unavailable; dependency status could not be checked";
+                }
+
+                // Unknown, Checking, Unsupported, or null: no check result available
+                return "CPU temperature is unavailable";
+            }
+
+            // Fallback for any future status
+            return GetDependencyAbsentReason(installationState);
+        }
+
+        /// <summary>
+        /// Returns the appropriate "dependency absent" reason based on installation state.
+        /// </summary>
+        private static string GetDependencyAbsentReason(PawnIoInstallationState? installationState)
+        {
+            var installStatus = installationState?.Status ?? PawnIoInstallationStatus.Unknown;
+
+            return installStatus switch
+            {
+                PawnIoInstallationStatus.NotInstalled => "PawnIO is not installed; CPU temperature is unavailable",
+                PawnIoInstallationStatus.CheckFailed => "CPU temperature unavailable; dependency status could not be checked",
+                // Unknown, Checking, Unsupported, or null: no check result available
+                _ => "CPU temperature is unavailable"
+            };
+        }
     }
 }

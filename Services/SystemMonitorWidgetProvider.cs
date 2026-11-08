@@ -316,8 +316,16 @@ namespace System_Monitor.Services
 
             // Build the payload from the snapshot, then layer the CPU
             // temperature setup status onto it.
+            // Installation metadata is not available in production — no
+            // setup result is cached. Pass null explicitly so the presenter
+            // emits the generic "unavailable" message rather than inferring
+            // a check was attempted.
+            var installState = (PawnIoInstallationState?)null;
+            var sensorReason = _metricsService?.GetCpuTemperatureAvailabilityReason();
+
             var payload = WidgetPayloadPresenter.PresentForPublication(
-                snapshot, selectionId, Clock, entry.ShowCpuTemperature);
+                snapshot, selectionId, Clock, entry.ShowCpuTemperature,
+                installState, sensorReason);
 
             // Resolve the CPU temperature setup presentation state and
             // merge it into the payload.
@@ -529,8 +537,16 @@ namespace System_Monitor.Services
 
                 // Build the payload from the snapshot, then layer the CPU
                 // temperature setup status onto it.
+                // Installation metadata is not available in production — no
+                // setup result is cached. Pass null explicitly so the presenter
+                // emits the generic "unavailable" message rather than inferring
+                // a check was attempted.
+                var installState = (PawnIoInstallationState?)null;
+                var sensorReason = _metricsService?.GetCpuTemperatureAvailabilityReason();
+
                 var payload = WidgetPayloadPresenter.PresentForPublication(
-                    snapshot, selectionId, Clock, widget.ShowCpuTemperature);
+                    snapshot, selectionId, Clock, widget.ShowCpuTemperature,
+                    installState, sensorReason);
 
                 // Resolve the CPU temperature setup presentation state and
                 // merge it into the payload.
@@ -606,12 +622,6 @@ namespace System_Monitor.Services
         /// </summary>
         protected bool SetupExecutionEnabled { get; set; } = false;
 
-        /// <summary>
-        /// The most recent setup result, held so the widget can reflect the
-        /// outcome of a setup attempt without re-evaluating the coordinator.
-        /// A background refresh keeps this current.
-        /// </summary>
-        private static PawnIoSetupResult? _lastSetupResult;
 
         /// <summary>
         /// Resolves the CPU temperature setup presentation state for the widget.
@@ -646,7 +656,11 @@ namespace System_Monitor.Services
             var currentlyAvailable = _lastSnapshot?.CpuTemperatureC is not null
                 && _lastSnapshot.CpuTemperatureC.Status == MeasurementStatus.Available;
 
-            var result = _lastSetupResult;
+            // No cached setup result in production — installation metadata is
+            // not retained after the setup flow completes. Pass null so the
+            // mapper returns the correct "no result available" state
+            // (CheckingSupport) when execution is enabled.
+            PawnIoSetupResult? result = null;
 
             return CpuTemperatureSetupStateMapper.FromSetupResult(
                 result,

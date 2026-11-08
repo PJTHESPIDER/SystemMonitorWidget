@@ -22,9 +22,25 @@
     SYSTEMMONITOR_CERT_PASSWORD environment variable so the password does
     not end up in the shell history or in a process listing.
 
+.PARAMETER CertificateThumbprint
+    Optional. The SHA-1 thumbprint of a certificate in the CurrentUser\My
+    store to use for signing. When supplied, the script validates the
+    certificate up front (before any destructive cleanup): it must exist in
+    CurrentUser\My, have a private key, be currently valid (not expired, not
+    before NotBefore), and its subject must exactly match the package
+    publisher (CN=$PublisherCN). The script will NOT fall back to subject
+    enumeration or create a new certificate; validation failure is a hard
+    error. When omitted, the existing fallback behavior applies: reuse a
+    trusted root certificate if available, otherwise create a new
+    self-signed certificate.
+
 .EXAMPLE
     $env:SYSTEMMONITOR_CERT_PASSWORD = '...'
     ./build/Create-TestMsix.ps1 -Runtime win-x64
+
+.EXAMPLE
+    $env:SYSTEMMONITOR_CERT_PASSWORD = '...'
+    ./build/Create-TestMsix.ps1 -Runtime win-x64 -CertificateThumbprint 'C78FF8061C1C124809996A6CFF2996B7DEF7E24F'
 #>
 [CmdletBinding()]
 param(
@@ -36,12 +52,66 @@ param(
     [string] $PublisherCN = "Developer",
     [string] $IdentityName = "com.test.systemmonitor",
     [string] $Runtime = "win-x64",
-    [SecureString] $CertPassword
+    [SecureString] $CertPassword,
+    [string] $CertificateThumbprint
 )
 
 $ErrorActionPreference = 'Stop'
 
 function Fail([string]$msg) { Write-Error $msg; exit 1 }
+
+# ---------------------------------------------------------------------------
+# Certificate validation (must run BEFORE any destructive cleanup).
+# If -CertificateThumbprint is supplied, we resolve and validate that exact
+# certificate up front. We do not fall back to subject enumeration or create
+# a new certificate. If validation fails, the script exits before touching
+# publish-temp, package-root, or msix-output.
+# ---------------------------------------------------------------------------
+
+$expectedPublisher = "CN=$PublisherCN"
+$selectedCert = $null
+
+if (-not [string]::IsNullOrWhiteSpace($CertificateThumbprint)) {
+    # Normalize: remove spaces, uppercase
+    $normalizedThumbprint = $CertificateThumbprint.Replace(" ", "").ToUpperInvariant()
+
+    # Validate thumbprint format (40 hex chars for SHA-1)
+    if (-not ($normalizedThumbprint -match '^[A-F0-9]{40}$')) {
+        Fail "Invalid certificate thumbprint format: '$CertificateThumbprint'. Expected 40 hexadecimal characters (SHA-1)."
+    }
+
+    Write-Host "Resolving certificate with thumbprint: $normalizedThumbprint"
+
+    # Resolve exact certificate in CurrentUser\My
+    $certPath = "Cert:\CurrentUser\My\$normalizedThumbprint"
+    $selectedCert = Get-Item -LiteralPath $certPath -ErrorAction SilentlyContinue
+
+    if (-not $selectedCert) {
+        Fail "Certificate with thumbprint '$normalizedThumbprint' not found in CurrentUser\My store."
+    }
+
+    # Require private key
+    if (-not $selectedCert.HasPrivateKey) {
+        Fail "Certificate '$normalizedThumbprint' does not have a private key. Cannot sign without a private key."
+    }
+
+    # Require valid (not expired, not revoked check via NotAfter/NotBefore)
+    $now = Get-Date
+    if ($selectedCert.NotAfter -lt $now) {
+        Fail "Certificate '$normalizedThumbprint' has expired (NotAfter: $($selectedCert.NotAfter))."
+    }
+    if ($selectedCert.NotBefore -gt $now) {
+        Fail "Certificate '$normalizedThumbprint' is not yet valid (NotBefore: $($selectedCert.NotBefore))."
+    }
+
+    # Validate subject against package publisher
+    $certSubject = $selectedCert.Subject
+    if (-not ($certSubject -eq $expectedPublisher)) {
+        Fail "Certificate subject '$certSubject' does not match package publisher '$expectedPublisher'. The certificate subject must exactly match the publisher identity used in the manifest."
+    }
+
+    Write-Host "Certificate validated: $normalizedThumbprint (Subject: $certSubject, NotAfter: $($selectedCert.NotAfter))"
+}
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDir
@@ -223,20 +293,29 @@ $pfxPath = Join-Path $msixOutDir "testcert.pfx"
 $publisherString = "CN=$PublisherCN"
 
 $cert = $null
-$trustedRoots = Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -eq $publisherString }
-foreach ($tr in $trustedRoots) {
-    $myCert = Get-Item "Cert:\CurrentUser\My\$($tr.Thumbprint)" -ErrorAction SilentlyContinue
-    if ($myCert -and $myCert.HasPrivateKey) {
-        $cert = $myCert
-        Write-Host "Reusing trusted root certificate: $($cert.Thumbprint)"
-        break
+
+if ($selectedCert) {
+    # Use the pre-validated certificate from -CertificateThumbprint
+    $cert = $selectedCert
+    Write-Host "Using explicitly selected certificate: $($cert.Thumbprint)"
+}
+else {
+    # Existing fallback behavior: try trusted root, then create self-signed
+    $trustedRoots = Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -eq $publisherString }
+    foreach ($tr in $trustedRoots) {
+        $myCert = Get-Item "Cert:\CurrentUser\My\$($tr.Thumbprint)" -ErrorAction SilentlyContinue
+        if ($myCert -and $myCert.HasPrivateKey) {
+            $cert = $myCert
+            Write-Host "Reusing trusted root certificate: $($cert.Thumbprint)"
+            break
+        }
     }
+    if (-not $cert) {
+        Write-Host "Creating new self-signed certificate..."
+        $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $publisherString -KeyExportPolicy Exportable -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(10)
+    }
+    if (-not $cert) { Fail "Certificate creation failed." }
 }
-if (-not $cert) {
-    Write-Host "Creating new self-signed certificate..."
-    $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $publisherString -KeyExportPolicy Exportable -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(10)
-}
-if (-not $cert) { Fail "Certificate creation failed." }
 
 if ([string]::IsNullOrWhiteSpace($env:SYSTEMMONITOR_CERT_PASSWORD)) {
     $securePwd = if ($CertPassword) { $CertPassword } else { Read-Host "Password for the signing certificate (input is not echoed)" -AsSecureString }

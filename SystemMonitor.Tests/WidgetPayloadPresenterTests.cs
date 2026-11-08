@@ -68,13 +68,23 @@ public class WidgetPayloadPresenterTests
         IEnumerable<HardwareDevice>? gpus = null,
         IEnumerable<DeviceReading>? readings = null,
         DateTimeOffset? timestamp = null,
-        IReadOnlyList<string>? gpuTrackedExtraInstanceIds = null) =>
+        IReadOnlyList<string>? gpuTrackedExtraInstanceIds = null,
+        Measurement? cpuTemperatureC = null,
+        Measurement? gpuVramUsedBytes = null,
+        Measurement? gpuVramTotalBytes = null,
+        string? gpuVramUsedDeviceId = null,
+        string? gpuVramTotalDeviceId = null) =>
         MetricsSnapshot.Create(
             timestamp ?? SampleTime,
             cpus: cpus,
             gpus: gpus,
             readings: readings,
-            gpuTrackedExtraInstanceIds: gpuTrackedExtraInstanceIds);
+            gpuTrackedExtraInstanceIds: gpuTrackedExtraInstanceIds,
+            cpuTemperatureC: cpuTemperatureC,
+            gpuVramUsedBytes: gpuVramUsedBytes,
+            gpuVramTotalBytes: gpuVramTotalBytes,
+            gpuVramUsedDeviceId: gpuVramUsedDeviceId,
+            gpuVramTotalDeviceId: gpuVramTotalDeviceId);
 
     // =====================================================================
     // Payload / template binding compatibility
@@ -1937,6 +1947,335 @@ public class WidgetPayloadPresenterTests
             Assert.DoesNotContain("Exception", pair.Value, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(" at ", pair.Value, StringComparison.Ordinal);
             Assert.DoesNotContain("test", pair.Value, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    // =====================================================================
+    // CPU temperature availability explanation (passive, not setup flow)
+    // =====================================================================
+
+    [Fact]
+    public void CpuTemp_FreshAvailable_WinsOverAbsentInstallMetadata()
+    {
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: Measurement.AvailableValue(72.0, "°C", "test"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.NotInstalled });
+
+        Assert.Equal("72.0°C", payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal(string.Empty, payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.CpuTempSetupDependencyInstalledSensorUnavailableKey));
+    }
+
+    [Fact]
+    public void CpuTemp_InstalledButUnreadable_FailedNeverAvailable()
+    {
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: Measurement.Failed("test"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.Installed, Version = "2.2.0" },
+            sensorAvailabilityReason: "not exposed by the driver");
+
+        Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal("CPU temperature could not be read", payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.CpuTempSetupDependencyInstalledSensorUnavailableKey));
+    }
+
+    [Fact]
+    public void CpuTemp_ConfirmedDependencyAbsent_NotInstalled()
+    {
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: Measurement.Failed("test"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.NotInstalled });
+
+        Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal("PawnIO is not installed; CPU temperature is unavailable", payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+    }
+
+    [Fact]
+    public void CpuTemp_CheckFailed_NotRepresentedAsAbsent()
+    {
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: Measurement.Failed("test"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.CheckFailed, FailureReason = "WMI error" });
+
+        Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal("CPU temperature unavailable; dependency status could not be checked", payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+    }
+
+    [Fact]
+    public void CpuTemp_Unsupported_NoRecognizedSensor()
+    {
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: Measurement.Unsupported("test"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.Installed, Version = "2.2.0" });
+
+        Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal("No supported CPU temperature sensor detected", payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+    }
+
+    [Fact]
+    public void CpuTemp_FailedRefresh_RetainedReading()
+    {
+        // Simulate a previously successful reading that is now failing:
+        // Failed measurement WITH a LastSuccessfulUpdate timestamp.
+        var retained = Measurement.Failed("test") with { LastSuccessfulUpdate = SampleTime.AddMinutes(-10) };
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: retained);
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.Installed, Version = "2.2.0" });
+
+        Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal("Unable to refresh CPU temperature", payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+    }
+
+    [Fact]
+    public void CpuTemp_Stale_PreservesExistingStalePresentation()
+    {
+        var stale = Measurement.Stale(SampleTime.AddMinutes(-5), "test");
+
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: stale);
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.Installed, Version = "2.2.0" });
+
+        Assert.Equal(WidgetPayloadPresenter.StaleMarker, payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal(string.Empty, payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+    }
+
+    [Fact]
+    public void CpuTemp_SetupPolicyDisabled_NoEffectOnPassiveExplanation()
+    {
+        // Setup execution disabled is an execution-policy state, not a sensor-failure cause.
+        // The passive explanation should still reflect the sensor/install state.
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: Measurement.Failed("test"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.Installed, Version = "2.2.0" },
+            sensorAvailabilityReason: "not exposed by the driver");
+
+        Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal("CPU temperature could not be read", payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+        // Setup flags should be false when setup not invoked (tested via presenter not setting them)
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.CpuTempSetupInProgressKey));
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.CpuTempSetupRequiredKey));
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.CpuTempSetupCompleteKey));
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.CpuTempSetupFailedKey));
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.CpuTempSetupNotEnabledKey));
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.CpuTempSetupDependencyInstalledSensorUnavailableKey));
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.CpuTempSetupRestartRequiredKey));
+    }
+
+    [Fact]
+    public void CpuTemp_VisibilityOff_SuppressesExplanation()
+    {
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: Measurement.Failed("test"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.Installed, Version = "2.2.0" },
+            sensorAvailabilityReason: "not exposed by the driver",
+            showCpuTemperature: false);
+
+        Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        // Reason text is still computed but template hides it via cpuTempShow flag
+        Assert.Equal("CPU temperature could not be read", payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.CpuTempShowKey));
+    }
+
+    [Fact]
+    public void CpuTemp_GpuPayloadUnchanged()
+    {
+        // GPU load and temperature should be unaffected by CPU temperature state.
+        // VRAM ratio requires proper sensor provenance which this test doesn't provide,
+        // so we only verify the GPU load and temperature are presented.
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            gpus: new[] { Gpu("gpu0", "NVIDIA RTX 3080", "NVIDIA", GpuIntegration.Discrete, "pci-0") },
+            readings: new[]
+            {
+                Read("gpu0", "LoadPercent", 30.0),
+                Read("gpu0", "TemperatureC", 65.0, "°C"),
+            },
+            cpuTemperatureC: Measurement.Failed("test"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.Installed, Version = "2.2.0" },
+            sensorAvailabilityReason: "not exposed by the driver");
+
+        // GPU load and temperature should be unaffected
+        Assert.Equal("30.0%", payload.GetText(WidgetPayloadPresenter.GpuKey));
+        Assert.Equal("65.0°C", payload.GetText(WidgetPayloadPresenter.GpuTempKey));
+    }
+
+    [Theory]
+    [InlineData(WidgetLayoutSize.Medium)]
+    [InlineData(WidgetLayoutSize.Large)]
+    public void Template_MediumAndLarge_BindAvailabilityReason(WidgetLayoutSize size)
+    {
+        var template = WidgetTemplates.BuildTemplate(size);
+
+        Assert.Contains("cpuTempAvailabilityReason", template);
+        Assert.Contains("cpuTempShow", template);
+    }
+
+    [Fact]
+    public void Template_Small_DoesNotBindAvailabilityReason()
+    {
+        var template = WidgetTemplates.GetTemplateForSize(WidgetLayoutSize.Small);
+
+        Assert.DoesNotContain("cpuTempAvailabilityReason", template);
+    }
+
+    // =====================================================================
+    // Regression: corrected state handoff (review findings)
+    // =====================================================================
+
+    [Fact]
+    public void CpuTemp_NoInstallationState_FallsBackToGenericUnavailable()
+    {
+        // Null installation state should produce the generic "unavailable" message
+        // (no check was attempted, so we don't claim one was).
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: Measurement.Failed("test"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: null);
+
+        Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal("CPU temperature is unavailable", payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+    }
+
+    [Fact]
+    public void CpuTemp_NotInstalledThenSetupComplete_ShowsAvailable()
+    {
+        // Simulate previously NotInstalled, then setup completed successfully,
+        // and now the sensor is available. The fresh available reading should
+        // win over any historical absent metadata.
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: Measurement.AvailableValue(68.0, "°C", "test"));
+
+        // Even if installation state says NotInstalled (stale cached result),
+        // a fresh available reading should be presented.
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.NotInstalled });
+
+        Assert.Equal("68.0°C", payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal(string.Empty, payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+    }
+
+    [Fact]
+    public void CpuTemp_SetupCompletedButSensorStillUnavailable_ShowsUnavailable()
+    {
+        // Setup completed (InstallationState == Installed) but sensor is still
+        // unavailable. Should show the sensor-specific reason, not a setup flow flag.
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: Measurement.Failed("test"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.Installed, Version = "2.2.0" },
+            sensorAvailabilityReason: SensorAvailability.Reasons.NotExposed);
+
+        Assert.Equal(WidgetPayloadPresenter.NotAvailable, payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal("CPU temperature could not be read", payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+        // Setup flags should remain false (passive explanation, not setup flow)
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.CpuTempSetupCompleteKey));
+        Assert.False(payload.GetFlag(WidgetPayloadPresenter.CpuTempSetupDependencyInstalledSensorUnavailableKey));
+    }
+
+    [Fact]
+    public void CpuTemp_CheckFailed_DistinctFromUnknown()
+    {
+        // CheckFailed must produce a different message than Unknown/Checking/Unsupported.
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: Measurement.Failed("test"));
+
+        var payloadCheckFailed = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.CheckFailed, FailureReason = "WMI error" });
+
+        Assert.Equal(WidgetPayloadPresenter.NotAvailable, payloadCheckFailed.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal("CPU temperature unavailable; dependency status could not be checked", payloadCheckFailed.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+
+        // Unknown should produce the generic "unavailable" message (no check attempted)
+        var payloadUnknown = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.Unknown });
+
+        Assert.Equal("CPU temperature is unavailable", payloadUnknown.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+
+        // CheckFailed and Unknown must be different
+        Assert.NotEqual(payloadCheckFailed.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey), payloadUnknown.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+
+        // NotInstalled must be different from both
+        var payloadNotInstalled = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.NotInstalled });
+
+        Assert.NotEqual(payloadCheckFailed.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey), payloadNotInstalled.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+        Assert.NotEqual(payloadUnknown.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey), payloadNotInstalled.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+    }
+
+    [Fact]
+    public void CpuTemp_FreshAvailable_OverridesStaleInstalledMetadata()
+    {
+        // Fresh available reading should override stale "Installed" installation state
+        // that might be cached from a previous run.
+        var snapshot = Snapshot(
+            cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+            cpuTemperatureC: Measurement.AvailableValue(72.0, "°C", "test"));
+
+        var payload = WidgetPayloadPresenter.Present(snapshot,
+            pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.Installed, Version = "2.2.0" });
+
+        Assert.Equal("72.0°C", payload.GetText(WidgetPayloadPresenter.CpuTempKey));
+        Assert.Equal(string.Empty, payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
+    }
+
+    [Fact]
+    public void CpuTemp_AllSensorReasons_MappedCorrectly()
+    {
+        // Verify all SensorAvailability.Reasons constants map to correct messages.
+        var reasons = new (string Reason, string ExpectedMessage)[]
+        {
+            (SensorAvailability.Reasons.NotExposed, "CPU temperature could not be read"),
+            (SensorAvailability.Reasons.ReadFailed, "CPU temperature could not be read"),
+            (SensorAvailability.Reasons.NoValue, "CPU temperature could not be read"),
+            (SensorAvailability.Reasons.NotPresent, "No supported CPU temperature sensor detected"),
+        };
+
+        foreach (var (reason, expected) in reasons)
+        {
+            var snapshot = Snapshot(
+                cpus: new[] { Cpu("cpu0", "Intel Core i7", "Intel") },
+                cpuTemperatureC: Measurement.Failed("test"));
+
+            var payload = WidgetPayloadPresenter.Present(snapshot,
+                pawnIoInstallationState: new PawnIoInstallationState { Status = PawnIoInstallationStatus.Installed, Version = "2.2.0" },
+                sensorAvailabilityReason: reason);
+
+            Assert.Equal(expected, payload.GetText(WidgetPayloadPresenter.CpuTempAvailabilityReasonKey));
         }
     }
 }

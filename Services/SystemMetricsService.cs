@@ -360,6 +360,16 @@ namespace System_Monitor.Services
         public LhmSensorBackendReport SensorBackendReport => _sensorBackendReport;
 
         /// <summary>
+        /// Gets the current unavailability reason for the CPU temperature sensor,
+        /// if any. Returns null when the sensor is available or the reason is
+        /// not known. This is used for the widget's passive availability explanation.
+        /// </summary>
+        public string? GetCpuTemperatureAvailabilityReason()
+        {
+            return _availability.ReasonFor("cpu-temperature");
+        }
+
+        /// <summary>
         /// The provenance of every reading the device-identified sensor
         /// backend supplies.
         ///
