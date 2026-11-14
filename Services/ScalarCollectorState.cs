@@ -172,7 +172,7 @@ namespace System_Monitor.Services
                 // A value was read earlier and has not been refreshed since.
                 // It is kept, but marked stale so it is not presented as
                 // current, and it keeps the time it was read.
-                return Measurement.Stale(entry.Last.LastSuccessfulUpdate, entry.Source);
+                return Measurement.Stale(entry.Last.LastSuccessfulUpdate, entry.Last.Source);
             }
 
             // Nothing was ever read. There is no value to show.

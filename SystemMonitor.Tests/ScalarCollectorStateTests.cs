@@ -187,4 +187,24 @@ public class ScalarCollectorStateTests
 
         Assert.Null(state.LastSuccessfulUpdate);
     }
+
+    [Fact]
+    public void AStaleValue_KeepsTheSourceOfTheSuccessfulSample()
+    {
+        // When a no-value report follows a successful read, the stale
+        // measurement must attribute the value to the source that
+        // produced it, not to the source of the subsequent failure.
+        const string successSource = "LHM";
+        const string noValueSource = "fallback";
+
+        var state = new ScalarCollectorState();
+        state.ReportSuccess(Metric, 1024, Unit, successSource, ReadAt);
+        state.ReportNoValue(Metric, Unit, noValueSource);
+
+        var measurement = state.ToMeasurement(Metric);
+
+        Assert.Equal(MeasurementStatus.Stale, measurement.Status);
+        Assert.Equal(ReadAt, measurement.LastSuccessfulUpdate);
+        Assert.Equal(successSource, measurement.Source);
+    }
 }
